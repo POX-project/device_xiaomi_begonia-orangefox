@@ -48,6 +48,12 @@ FW_DIR=/system/etc/firmware
 
 mkdir -p "$TMP" "$CTRL" 2>/dev/null
 
+# Android's fs_config assigns mode 0644 to files under /system/etc, so the
+# executable bit on the DHCP hooks is lost when the ramdisk is packed.  Put it
+# back before dhcpcd/udhcpc try to execute them.
+chmod 0755 /system/etc/foxwifi/dhcpcd-hook \
+           /system/etc/foxwifi/udhcpc.script 2>/dev/null
+
 log() {
     echo "$(date '+%H:%M:%S') $*" >> "$LOG" 2>/dev/null
 }

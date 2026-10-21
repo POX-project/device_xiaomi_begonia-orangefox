@@ -31,6 +31,10 @@ LOG=/tmp/foxweb.log
 PID_FILE=/tmp/foxweb.pid
 IFACE=wlan0
 
+# Android's fs_config assigns mode 0644 to files under /system/etc, and
+# BusyBox httpd only executes CGI scripts that have the executable bit.
+chmod 0755 "$DOC"/cgi-bin/* 2>/dev/null
+
 log() {
     echo "$(date '+%H:%M:%S') $*" >> "$LOG" 2>/dev/null
 }
