@@ -148,8 +148,11 @@ does not patch OrangeFox: everything is added from this device tree.
   - `foxwifi`, `foxweb` and the dashboard in `recovery/root/system/etc/foxwww`.
 - The builder must comment out `CONFIG_CTRL_IFACE_HIDL=y` in
   `external/wpa_supplicant_8/wpa_supplicant/android.config` before compiling,
-  so `wpa_cli` uses the unix control socket.  The `wifi-browser` CI branch does
-  this automatically.
+  so `wpa_cli` uses the unix control socket.  The stock `notify.c` includes
+  `hidl.h` and calls `wpas_hidl_*` unconditionally even when HIDL is disabled,
+  so the builder also drops a recovery-only no-op `hidl.h` into
+  `external/wpa_supplicant_8/wpa_supplicant/`.  The `wifi-browser` CI branch
+  does both automatically.
 
 #### Using it
 
