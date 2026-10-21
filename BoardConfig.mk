@@ -173,6 +173,11 @@ TW_PREPARE_DATA_MEDIA_EARLY := true
 
 # Recovery WiFi: the MediaTek WLAN driver registers with cfg80211, so
 # wpa_supplicant must be built with the nl80211 driver interface.
+#
+# external/wpa_supplicant_8/Android.mk only defines the wpa_supplicant and
+# wpa_cli modules when WPA_SUPPLICANT_VERSION is VER_0_8_X; without it the
+# makefile parses to nothing and the relink step silently ships no binaries.
+WPA_SUPPLICANT_VERSION := VER_0_8_X
 BOARD_WPA_SUPPLICANT_DRIVER := NL80211
 
 # Debug flags
