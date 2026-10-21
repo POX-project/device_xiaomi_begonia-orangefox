@@ -1,0 +1,45 @@
+# Android fstab file.
+# The filesystem that contains the filesystem checker binary (typically /system) cannot
+# specify MF_CHECK, and must come before any filesystems that do specify MF_CHECK
+
+# TODO: Add 'check' as fs_mgr_flags with data partition.
+# Currently we dont have e2fsck compiled. So fs check would failed.
+
+# "unified" branch: this single fstab serves BOTH partition layouts.
+#   * dynamic  -> system/vendor/product/system_ext/odm live inside `super`, so
+#                 the `logical` entries below are used. TWRP discards any
+#                 `logical` entry it cannot prepare (Prepare_Super_Volume
+#                 failure), which is what makes these a no-op on devices with
+#                 no super partition.
+#   * physical -> the by-name entries below are the only ones left in that case.
+# Read-only system/vendor partitions are listed as explicit erofs + ext4
+# pairs. TWRP probes the real filesystem with libblkid and uses the matching
+# entry's mount flags, so a ROM can ship either layout. The second entry for
+# each mount point is folded into the first by TWRP's fstab parser.
+# /data keeps an explicit ext4 + f2fs pair either way.
+
+#<src>                                           <mnt_point>           <type>   <mnt_flags and options>                                         <fs_mgr_flags>
+
+# --- dynamic layout: logical partitions inside super ---
+system                                          /system               erofs    ro                                                              wait,logical,avb=vbmeta,first_stage_mount,avb_keys=/avb/q-gsi.avbpubkey:/avb/r-gsi.avbpubkey:/avb/s-gsi.avbpubkey
+system                                          /system               ext4     ro                                                              wait,logical,avb=vbmeta,first_stage_mount,avb_keys=/avb/q-gsi.avbpubkey:/avb/r-gsi.avbpubkey:/avb/s-gsi.avbpubkey
+system_ext                                      /system_ext           erofs    ro                                                              wait,logical,first_stage_mount
+system_ext                                      /system_ext           ext4     ro                                                              wait,logical,first_stage_mount
+product                                         /product              erofs    ro                                                              wait,logical,first_stage_mount
+product                                         /product              ext4     ro                                                              wait,logical,first_stage_mount
+vendor                                          /vendor               erofs    ro                                                              wait,logical,avb=vbmeta,first_stage_mount
+vendor                                          /vendor               ext4     ro                                                              wait,logical,avb=vbmeta,first_stage_mount
+odm                                             /odm                  erofs    ro                                                              wait,logical,first_stage_mount
+odm                                             /odm                  ext4     ro                                                              wait,logical,first_stage_mount
+
+# --- non-dynamic layout: physical by-name partitions ---
+/dev/block/platform/bootdevice/by-name/system    /system               erofs    ro                                                              wait,avb=vbmeta,first_stage_mount,avb_keys=/avb/q-gsi.avbpubkey:/avb/r-gsi.avbpubkey:/avb/s-gsi.avbpubkey
+/dev/block/platform/bootdevice/by-name/system    /system               ext4     ro                                                              wait,avb=vbmeta,first_stage_mount,avb_keys=/avb/q-gsi.avbpubkey:/avb/r-gsi.avbpubkey:/avb/s-gsi.avbpubkey
+/dev/block/platform/bootdevice/by-name/vendor    /vendor               erofs    ro                                                              wait,avb,first_stage_mount
+/dev/block/platform/bootdevice/by-name/vendor    /vendor               ext4     ro                                                              wait,avb,first_stage_mount
+
+# --- common to both layouts ---
+/dev/block/platform/bootdevice/by-name/misc      /misc                 emmc     defaults                                                        defaults
+/dev/block/platform/bootdevice/by-name/userdata   /data       ext4     noatime,nosuid,nodev,noauto_da_alloc,errors=panic,inlinecrypt wait,check,formattable,quota,latemount,resize,reservedsize=128m,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized,keydirectory=/metadata/vold/metadata_encryption,fsverity
+/dev/block/platform/bootdevice/by-name/userdata   /data       f2fs     noatime,nosuid,nodev,discard,flush_merge,reserve_root=134217,resgid=1065,alloc_mode=reuse,fsync_mode=nobarrier,inlinecrypt wait,check,formattable,quota,latemount,reservedsize=128m,checkpoint=fs,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized,keydirectory=/metadata/vold/metadata_encryption,fsverity
+/dev/block/platform/bootdevice/by-name/metadata  /metadata             ext4     noatime,nosuid,nodev,discard                                    wait,check,formattable,first_stage_mount
