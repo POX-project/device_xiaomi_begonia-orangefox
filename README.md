@@ -150,7 +150,8 @@ does not patch OrangeFox: everything is added from this device tree.
   `external/wpa_supplicant_8/wpa_supplicant/android.config` before compiling,
   so `wpa_cli` uses the unix control socket.  The stock `notify.c` includes
   `hidl.h` and calls `wpas_hidl_*` unconditionally even when HIDL is disabled,
-  so the builder also drops a recovery-only no-op `hidl.h` into
+  and the header's own no-op stubs are incomplete, so the builder also drops a
+  recovery-only no-op `hidl.h` into
   `external/wpa_supplicant_8/wpa_supplicant/`.  The `wifi-browser` CI branch
   does both automatically.
 
