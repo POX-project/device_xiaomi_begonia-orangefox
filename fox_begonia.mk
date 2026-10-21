@@ -40,8 +40,11 @@ ifeq ($(FOX_BUILD_TYPE),Stable)
   OF_DONT_KEEP_LOG_HISTORY := 1
 endif
 
-# Keep the ramdisk within the 64 MB recovery partition.
-OF_USE_LZMA_COMPRESSION := 1
+# The prebuilt begonia kernel only has CONFIG_RD_GZIP=y. Its initramfs
+# decompressor has no LZMA/LZ4/XZ support, so an LZMA-compressed OrangeFox
+# ramdisk makes the bootloader hand the kernel an image it cannot unpack
+# (black screen / recovery bootloop). Keep the default gzip ramdisk.
+# OF_USE_LZMA_COMPRESSION := 1
 OF_SPLASH_MAX_SIZE := 130
 
 # Use magiskboot for boot/recovery patching.
