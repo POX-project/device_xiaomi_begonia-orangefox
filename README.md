@@ -54,7 +54,7 @@ Current state of features (from [here](https://twrp.me/faq/OfficialMaintainer.ht
 - [x] screenshot
 - [x] partition SD card
 
-# Building (TWRP)
+# Building (TWRP / OrangeFox)
 ```bash
 repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b twrp-12.1 --depth=1
 # put this tree at device/xiaomi/begonia
@@ -64,8 +64,22 @@ lunch twrp_begonia-eng
 mka recoveryimage -j$(nproc --all)
 ```
 
-`twrp_begonia.mk` inherits `vendor/twrp/config/common.mk`. The
-`pb_begonia.mk` product is kept for PBRP builds.
+`twrp_begonia.mk` inherits `vendor/twrp/config/common.mk` and, when present,
+`fox_begonia.mk`. The `pb_begonia.mk` product is kept for PBRP builds.
+
+## OrangeFox
+
+The same tree builds OrangeFox from its official 12.1 sync:
+
+```bash
+# after orangefox_sync.sh has prepared the source tree
+lunch twrp_begonia-eng
+FOX_BUILD_DEVICE=begonia FOX_BUILD_TYPE=Unofficial mka recoveryimage -j$(nproc --all)
+```
+
+`fox_begonia.mk` carries the OrangeFox UI, LZMA, magiskboot and partition
+tool settings. The CI builder lives at
+`methylphetamine/orangefox-begonia-build`.
 
 **Copyright (C) 2022 Team Win Recovery Project**
 
