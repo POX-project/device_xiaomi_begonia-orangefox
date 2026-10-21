@@ -53,7 +53,8 @@ json_error() {
 
 token_ok() {
     want=$(cat "$TOKEN_FILE" 2>/dev/null)
-    [ -z "$want" ] && return 0
+    # Fail closed: never allow mutations just because the token file vanished.
+    [ -n "$want" ] || return 1
     got=${HTTP_X_FOX_TOKEN:-}
     [ -z "$got" ] && got=$(query_param token)
     [ "$got" = "$want" ]
