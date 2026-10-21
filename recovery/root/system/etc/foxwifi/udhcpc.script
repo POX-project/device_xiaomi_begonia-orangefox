@@ -17,7 +17,11 @@ case "$1" in
         fi
         if [ -n "$router" ]; then
             for r in $router; do
-                route add default gw "$r" dev "$interface" 2>/dev/null && break
+                if [ -x /system/bin/busybox ]; then
+                    /system/bin/busybox route add default gw "$r" dev "$interface" 2>/dev/null && break
+                else
+                    route add default gw "$r" dev "$interface" 2>/dev/null && break
+                fi
             done
         fi
         : > /etc/resolv.conf 2>/dev/null

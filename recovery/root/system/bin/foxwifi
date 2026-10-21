@@ -195,6 +195,7 @@ start_wmt() {
 
         if [ -x /system/bin/wlan_assistant ] && ! running wlan_assistant; then
             log "starting wlan_assistant"
+            mkdir -p /data/vendor/macwifi /data/vendor/nvramwifi 2>/dev/null
             ( /system/bin/wlan_assistant >>"$LOG" 2>&1 ) &
             echo $! > "$TMP/wlan_assistant.pid"
             # Let it program the MAC/NVRAM before wpa_supplicant starts.
