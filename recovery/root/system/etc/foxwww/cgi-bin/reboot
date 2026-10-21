@@ -1,0 +1,20 @@
+#!/system/bin/sh
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_post
+require_token
+
+target=$(body_param target)
+case "$target" in
+    recovery)   powerctl="reboot,recovery" ;;
+    bootloader) powerctl="reboot,bootloader" ;;
+    fastboot)   powerctl="reboot,fastboot" ;;
+    system|"")  powerctl="reboot" ;;
+    *)          json_error "400 Bad Request" "unknown reboot target" ;;
+esac
+
+json_header
+printf '{"ok":true,"message":"rebooting"}\n'
+
+sleep 1
+setprop sys.powerctl "$powerctl"

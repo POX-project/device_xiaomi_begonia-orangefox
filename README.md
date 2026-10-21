@@ -90,6 +90,7 @@ tool settings. The CI builder lives at
 | --- | --- | --- |
 | `twrp-12.1` | physical (non-dynamic) | ext4 system/vendor, ext4+f2fs /data. Baseline TWRP tree. |
 | `unified` | **both** | see below. |
+| `wifi-browser` | **both** | `unified` + MediaTek WiFi and the FoxWeb dashboard. |
 ### `unified`
 
 One recovery that boots on both a stock (non-dynamic) begonia and a
@@ -127,3 +128,71 @@ EROFS support is built in: the prebuilt recovery kernel has
 fstab carries explicit `erofs` + `ext4` pairs. The dual-entry fstab depends on
 TWRP discarding unprepared `logical` entries, and decryption must be checked
 against the installed ROM's FBE version.
+
+### `wifi-browser`
+
+`wifi-browser` is `unified` plus recovery WiFi and a browser dashboard.  It
+does not patch OrangeFox: everything is added from this device tree.
+
+- The prebuilt kernel already has the MediaTek CONSYS/WMT/WLAN stack built in
+  (`CONFIG_MTK_COMBO_WIFI=y`, `CONFIG_WLAN_DRV_BUILD_IN=y`,
+  `CONFIG_MTK_COMBO_CHIP_CONSYS_6785=y`, `CONFIG_CFG80211=y`).  The tree adds
+  the missing userspace pieces:
+  - `wmt_loader`, `wmt_launcher`, `wlan_assistant` and the stock firmware in
+    `recovery/root/system/etc/firmware` (also reachable as `/vendor/firmware`).
+  - `wpa_supplicant`/`wpa_cli` built from `external/wpa_supplicant_8` with
+    `BOARD_WPA_SUPPLICANT_DRIVER := NL80211`.
+  - TWRP's static `dhcpcd`, with a BusyBox `udhcpc` fallback for encrypted
+    devices where `/data/misc/dhcp` is unavailable.
+  - A static BusyBox 1.36.1 in `/system/bin/busybox` (contains `httpd` with CGI).
+  - `foxwifi`, `foxweb` and the dashboard in `recovery/root/system/etc/foxwww`.
+- The builder must comment out `CONFIG_CTRL_IFACE_HIDL=y` in
+  `external/wpa_supplicant_8/wpa_supplicant/android.config` before compiling,
+  so `wpa_cli` uses the unix control socket.  The `wifi-browser` CI branch does
+  this automatically.
+
+#### Using it
+
+In the recovery terminal:
+
+```sh
+foxwifi on                 # load WMT firmware and start wpa_supplicant
+foxwifi scan               # list nearby networks
+foxwifi connect "MyNet" "password" WPA2
+foxwifi status             # state, IP and MAC
+foxweb status              # URL, one-click URL and access token
+foxwifi save               # remember the network on /sdcard/Fox/wifi.conf
+foxwifi auto               # reconnect using the remembered network
+```
+
+`foxweb` is started by init on port 8080.  Open the URL printed by
+`foxweb status`; the `#token=...` fragment is imported by the dashboard so
+mutating actions work without typing the token.  The token is also accepted
+via the `X-Fox-Token` header and is required for connect, disconnect, WiFi
+on/off, forget and reboot.
+
+Without WiFi, the same dashboard is reachable over USB:
+
+```sh
+adb forward tcp:8080 tcp:8080
+# then open http://localhost:8080/
+```
+
+The dashboard can scan, join WPA/WPA2/WPA3 and open networks, toggle WiFi,
+disconnect, forget a saved network, show logs and reboot to recovery, system
+or bootloader.  Credentials are only written to `/sdcard/Fox/wifi.conf` when
+"Remember this network" is selected; that file is plaintext, so treat it
+accordingly.
+
+#### Limits
+
+- `wmt_launcher`/`wmt_loader` are stock MediaTek binaries; they are linked
+  against bionic and need the recovery ramdisk's `libc++`, `liblog`,
+  `libcutils` and `libnl`.  If they refuse to run on a particular firmware
+  version, capture `/tmp/foxwifi.log` and adjust the firmware set.
+- `wlan_assistant` reads calibration from `/mnt/vendor/nvdata/APCFG/APRDEB`;
+  `foxwifi` mounts `nvdata` read-only.  A missing or unreadable `nvdata`
+  partition can leave the MAC unset, but association may still work.
+- The dashboard is HTTP-only and intended for a trusted local network.  It is
+  not a replacement for the recovery UI; use the token and disconnect WiFi
+  when you are done.

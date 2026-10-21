@@ -1,4 +1,5 @@
 import /microtrust_begonia.rc
+import /init.recovery.wifi.rc
 
 on early-init
     start adbd

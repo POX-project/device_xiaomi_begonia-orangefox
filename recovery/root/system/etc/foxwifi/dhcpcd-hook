@@ -1,0 +1,36 @@
+#!/system/bin/sh
+# Minimal dhcpcd hook for recovery.
+#
+# The stock Android dhcpcd-run-hooks script is not part of the recovery
+# ramdisk, and dhcpcd itself does not configure the interface: it only obtains
+# the lease and calls its hook.  This script applies the address, default route
+# and DNS servers for the common DHCP reasons.
+#
+# dhcpcd-6.8.2 passes the lease in environment variables such as
+# new_ip_address, new_subnet_mask, new_routers and new_domain_name_servers.
+
+case "$reason" in
+    BOUND|RENEW|REBIND|REBOOT)
+        [ -n "$new_ip_address" ] || exit 0
+        if [ -n "$new_broadcast_address" ]; then
+            ifconfig "$interface" "$new_ip_address" netmask "$new_subnet_mask" \
+                broadcast "$new_broadcast_address" up
+        else
+            ifconfig "$interface" "$new_ip_address" netmask "$new_subnet_mask" up
+        fi
+        if [ -n "$new_routers" ]; then
+            for r in $new_routers; do
+                route add default gw "$r" dev "$interface" 2>/dev/null && break
+            done
+        fi
+        : > /etc/resolv.conf 2>/dev/null
+        for d in $new_domain_name_servers; do
+            echo "nameserver $d" >> /etc/resolv.conf 2>/dev/null
+        done
+        ;;
+    RELEASE|NAK|EXPIRE|FAIL|STOP)
+        ifconfig "$interface" 0.0.0.0 2>/dev/null
+        ;;
+esac
+
+exit 0

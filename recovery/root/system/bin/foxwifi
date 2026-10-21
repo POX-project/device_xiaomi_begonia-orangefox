@@ -1,0 +1,733 @@
+#!/system/bin/sh
+#
+# foxwifi - MediaTek WiFi bring-up for OrangeFox recovery on begonia.
+#
+# The prebuilt begonia kernel has the whole MediaTek CONSYS/WMT/WLAN stack
+# built in (CONFIG_MTK_COMBO_WIFI=y, CONFIG_WLAN_DRV_BUILD_IN=y).  What is
+# missing in recovery is the userspace side: wmt_loader/wmt_launcher to boot
+# the connectivity co-processor, the WIFI NVRAM partition, wpa_supplicant and
+# a DHCP client.  This script wires those together and is intentionally
+# self-contained so it can be driven from a terminal or from foxweb's CGI.
+#
+# Usage:
+#   foxwifi on                     power up WMT + start wpa_supplicant
+#   foxwifi off                    stop DHCP/supplicant, link down
+#   foxwifi restart
+#   foxwifi scan                   human-readable scan
+#   foxwifi scan-json              scan as a JSON array
+#   foxwifi connect SSID [PSK] [OPEN|WPA|WPA2|WPA3]
+#   foxwifi disconnect
+#   foxwifi status                 human-readable status
+#   foxwifi status-json            status as a JSON object
+#   foxwifi save                   remember the last network (plaintext)
+#   foxwifi forget                 delete the remembered network
+#   foxwifi auto                   connect using the remembered network
+#   foxwifi daemon                 init service: keep the link alive
+#   foxwifi log                    show the log
+#
+
+PATH=/sbin:/system/bin:/system/xbin:/vendor/bin:/vendor/bin/hw
+export PATH
+export LD_LIBRARY_PATH=/system/lib64:/vendor/lib64:/vendor/lib64/hw
+
+BB=/system/bin/busybox
+[ -x "$BB" ] || BB=/sbin/busybox
+[ -x "$BB" ] || BB=
+
+IFACE=wlan0
+TMP=/tmp/foxwifi
+CTRL=$TMP/sockets
+CONF=$TMP/wpa_supplicant.conf
+LOG=/tmp/foxwifi.log
+DESIRED=$TMP/desired
+LAST=$TMP/last
+LOCK=$TMP/lock
+NVDATA=/dev/block/platform/bootdevice/by-name/nvdata
+NVDATA_MNT=/mnt/vendor/nvdata
+FW_DIR=/system/etc/firmware
+
+mkdir -p "$TMP" "$CTRL" 2>/dev/null
+
+log() {
+    echo "$(date '+%H:%M:%S') $*" >> "$LOG" 2>/dev/null
+}
+
+say() {
+    echo "$*"
+    log "$*"
+}
+
+fail() {
+    say "foxwifi: $*" >&2
+    return 1
+}
+
+have() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+running() {
+    if [ -n "$BB" ]; then
+        "$BB" pidof "$1" >/dev/null 2>&1
+    else
+        pidof "$1" >/dev/null 2>&1
+    fi
+}
+
+wpa() {
+    if [ -n "$BB" ]; then
+        "$BB" timeout 5 wpa_cli -p"$CTRL" -i"$IFACE" "$@" 2>/dev/null
+    else
+        timeout 5 wpa_cli -p"$CTRL" -i"$IFACE" "$@" 2>/dev/null
+    fi
+}
+
+wpa_ok() {
+    out=$(wpa "$@" | tail -n 1)
+    case "$out" in
+        OK*) return 0 ;;
+        *) log "wpa_cli $* -> ${out:-<empty>}"; return 1 ;;
+    esac
+}
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\r\n'
+}
+
+get_ip() {
+    if have ip; then
+        addr=$(ip -o -4 addr show "$IFACE" 2>/dev/null \
+            | awk '{print $4}' | cut -d/ -f1 | head -n 1)
+        if [ -n "$addr" ]; then
+            echo "$addr"
+            return 0
+        fi
+    fi
+    ifconfig "$IFACE" 2>/dev/null | awk '
+        /inet addr:/ {
+            for (i = 1; i <= NF; i++)
+                if ($i ~ /^addr:/) { sub(/^addr:/, "", $i); print $i; exit }
+        }
+        /inet / {
+            for (i = 1; i <= NF; i++)
+                if ($i == "inet") {
+                    addr = $(i + 1)
+                    sub(/\/.*/, "", addr)
+                    print addr
+                    exit
+                }
+        }'
+}
+
+get_mac() {
+    cat "/sys/class/net/$IFACE/address" 2>/dev/null
+}
+
+get_state() {
+    wpa status 2>/dev/null | sed -n 's/^wpa_state=//p' | head -n 1
+}
+
+get_ssid() {
+    wpa status 2>/dev/null | sed -n 's/^ssid=//p' | head -n 1
+}
+
+set_desired() {
+    echo "$1" > "$DESIRED"
+}
+
+get_desired() {
+    cat "$DESIRED" 2>/dev/null || echo up
+}
+
+mount_nvdata() {
+    [ -b "$NVDATA" ] || return 0
+    grep -q " $NVDATA_MNT " /proc/mounts 2>/dev/null && return 0
+    mkdir -p "$NVDATA_MNT" 2>/dev/null
+    if mount -t ext4 -o ro "$NVDATA" "$NVDATA_MNT" >>"$LOG" 2>&1; then
+        log "mounted nvdata (read-only) on $NVDATA_MNT"
+    else
+        log "could not mount nvdata; WiFi calibration may be unavailable"
+    fi
+}
+
+write_conf() {
+    {
+        echo "ctrl_interface=$CTRL"
+        echo "ctrl_interface_group=0"
+        echo "update_config=1"
+        echo "country=US"
+        echo "ap_scan=1"
+    } > "$CONF"
+    chmod 0600 "$CONF" 2>/dev/null
+}
+
+start_wmt() {
+    if [ ! -f "$TMP/wmt.ready" ]; then
+        mount_nvdata
+
+        # wmt_loader only needs to talk to the WMT driver once per boot.
+        if [ ! -f "$TMP/wmt.loaded" ] && [ -x /system/bin/wmt_loader ]; then
+            log "running wmt_loader"
+            /system/bin/wmt_loader >>"$LOG" 2>&1
+            touch "$TMP/wmt.loaded"
+        fi
+
+        # The WLAN driver can create wlan0 during probe, before the firmware
+        # has been downloaded.  Always keep wmt_launcher available so the
+        # driver can fetch the ROM patch when the interface is opened.
+        if [ -x /system/bin/wmt_launcher ] && ! running wmt_launcher; then
+            log "starting wmt_launcher"
+            ( /system/bin/wmt_launcher -p "$FW_DIR/" >>"$LOG" 2>&1 ) &
+            echo $! > "$TMP/wmt_launcher.pid"
+        fi
+
+        i=0
+        while [ "$i" -lt 20 ]; do
+            [ -e "/sys/class/net/$IFACE" ] && break
+            sleep 1
+            i=$((i + 1))
+        done
+
+        if [ ! -e "/sys/class/net/$IFACE" ]; then
+            fail "$IFACE did not appear (WMT firmware load failed?)"
+            return 1
+        fi
+
+        if [ -x /system/bin/wlan_assistant ] && ! running wlan_assistant; then
+            log "starting wlan_assistant"
+            ( /system/bin/wlan_assistant >>"$LOG" 2>&1 ) &
+            echo $! > "$TMP/wlan_assistant.pid"
+            # Let it program the MAC/NVRAM before wpa_supplicant starts.
+            sleep 2
+        fi
+    fi
+
+    if [ ! -e "/sys/class/net/$IFACE" ]; then
+        # The driver may have been reset; retry the full bring-up next time.
+        rm -f "$TMP/wmt.ready"
+        fail "$IFACE is missing"
+        return 1
+    fi
+    return 0
+}
+
+link_up() {
+    [ -e "/sys/class/net/$IFACE" ] || return 1
+    ifconfig "$IFACE" up >>"$LOG" 2>&1
+}
+
+start_supp() {
+    mkdir -p "$CTRL" 2>/dev/null
+    [ -f "$CONF" ] || write_conf
+
+    if running wpa_supplicant && [ -S "$CTRL/$IFACE" ]; then
+        return 0
+    fi
+
+    if running wpa_supplicant; then
+        wpa terminate >/dev/null 2>&1
+        sleep 1
+        if running wpa_supplicant; then
+            if [ -n "$BB" ]; then
+                "$BB" pkill wpa_supplicant >/dev/null 2>&1
+            else
+                pkill wpa_supplicant >/dev/null 2>&1
+            fi
+            sleep 1
+        fi
+    fi
+
+    log "starting wpa_supplicant"
+    if ! wpa_supplicant -B -Dnl80211 -i"$IFACE" -c"$CONF" \
+            -P"$TMP/wpa.pid" >>"$LOG" 2>&1; then
+        log "wpa_supplicant failed to start"
+    fi
+
+    i=0
+    while [ "$i" -lt 20 ]; do
+        [ -S "$CTRL/$IFACE" ] && return 0
+        sleep 1
+        i=$((i + 1))
+    done
+
+    fail "wpa_supplicant control socket did not appear"
+    return 1
+}
+
+wifi_up() {
+    start_wmt || return 1
+    link_up || return 1
+    start_supp || return 1
+    # Supplicant owns the interface now; WMT bring-up can be skipped until
+    # the driver or interface disappears.
+    touch "$TMP/wmt.ready"
+    return 0
+}
+
+stop_dhcp() {
+    if have dhcpcd; then
+        dhcpcd -k "$IFACE" >>"$LOG" 2>&1
+    fi
+    if [ -n "$BB" ]; then
+        "$BB" pkill udhcpc >/dev/null 2>&1
+    fi
+    ifconfig "$IFACE" 0.0.0.0 2>/dev/null
+}
+
+wifi_down() {
+    if [ -S "$CTRL/$IFACE" ]; then
+        wpa disconnect >/dev/null 2>&1
+        wpa terminate >/dev/null 2>&1
+    fi
+    if running wpa_supplicant; then
+        if [ -n "$BB" ]; then "$BB" pkill wpa_supplicant >/dev/null 2>&1; else pkill wpa_supplicant >/dev/null 2>&1; fi
+    fi
+    stop_dhcp
+    ifconfig "$IFACE" down >>"$LOG" 2>&1
+    log "WiFi down"
+}
+
+set_dhcp_dns() {
+    if [ ! -s /etc/resolv.conf ]; then
+        {
+            echo "nameserver 1.1.1.1"
+            echo "nameserver 8.8.8.8"
+        } > /etc/resolv.conf 2>/dev/null
+    fi
+}
+
+try_udhcpc() {
+    [ -n "$BB" ] || return 1
+    [ -x /system/etc/foxwifi/udhcpc.script ] || return 1
+    log "requesting DHCP lease with udhcpc"
+    "$BB" udhcpc -i "$IFACE" -n -q -t 6 -T 3 \
+        -s /system/etc/foxwifi/udhcpc.script >>"$LOG" 2>&1
+}
+
+wait_for_ip() {
+    i=0
+    ip=""
+    while [ "$i" -lt "$1" ]; do
+        ip=$(get_ip)
+        [ -n "$ip" ] && break
+        sleep 1
+        i=$((i + 1))
+    done
+}
+
+start_dhcp() {
+    ip=""
+
+    if have dhcpcd; then
+        # dhcpcd keeps leases in /data/misc/dhcp; make the directory when
+        # /data is not mounted.  If it is mounted but encrypted this fails
+        # harmlessly and we fall through to udhcpc.
+        mkdir -p /system/etc/dhcpcd /data/misc/dhcp 2>/dev/null
+        log "requesting DHCP lease on $IFACE (dhcpcd)"
+        dhcpcd -q -c /system/etc/foxwifi/dhcpcd-hook "$IFACE" >>"$LOG" 2>&1 \
+            || dhcpcd -c /system/etc/foxwifi/dhcpcd-hook "$IFACE" >>"$LOG" 2>&1
+        wait_for_ip 15
+    fi
+
+    if [ -z "$ip" ]; then
+        try_udhcpc || true
+        wait_for_ip 15
+    fi
+
+    [ -n "$ip" ] || { fail "no DHCP lease on $IFACE"; return 1; }
+    set_dhcp_dns
+    log "DHCP lease: $ip"
+    return 0
+}
+
+remember_last() {
+    {
+        printf 'ssid=%s\n' "$1"
+        printf 'psk=%s\n' "$2"
+        printf 'enc=%s\n' "$3"
+    } > "$LAST"
+    chmod 0600 "$LAST" 2>/dev/null
+}
+
+connect_network() {
+    ssid=$1
+    psk=$2
+    enc=$3
+
+    [ -n "$ssid" ] || { fail "empty SSID"; return 1; }
+    [ "$(printf '%s' "$ssid" | wc -c)" -le 32 ] || { fail "SSID longer than 32 bytes"; return 1; }
+    case "$ssid" in *'
+'*) fail "SSID contains a newline"; return 1 ;; esac
+    case "$ssid" in *'"'*|*'\\'*) fail "SSID contains unsupported characters"; return 1 ;; esac
+    case "$psk" in *'
+'*) fail "password contains a newline"; return 1 ;; esac
+    case "$psk" in *'"'*|*'\\'*) fail "password contains unsupported characters"; return 1 ;; esac
+    [ -z "$psk" ] || [ "$(printf '%s' "$psk" | wc -c)" -le 64 ] || { fail "password longer than 64 bytes"; return 1; }
+
+    case "$enc" in
+        OPEN|open|"") [ -z "$psk" ] && enc=OPEN ;;
+    esac
+    [ -n "$enc" ] || enc=WPA2
+
+    wifi_up || { log "retrying WiFi bring-up"; sleep 2; wifi_up; } || return 1
+
+    wpa remove_network all >/dev/null 2>&1
+    id=$(wpa add_network | tail -n 1)
+    case "$id" in
+        ''|*[!0-9]*) fail "could not add a wpa_supplicant network"; return 1 ;;
+    esac
+
+    wpa_ok set_network "$id" ssid "\"$ssid\"" || { fail "could not set SSID"; return 1; }
+    # Needed for hidden networks; harmless for broadcast SSIDs.
+    wpa set_network "$id" scan_ssid 1 >/dev/null 2>&1
+
+    if [ "$enc" = OPEN ] || [ -z "$psk" ]; then
+        wpa_ok set_network "$id" key_mgmt NONE || { fail "could not set open security"; return 1; }
+    else
+        case "$enc" in
+            WPA3|SAE|sae) key_mgmt=SAE; pmf=2 ;;
+            *)            key_mgmt=WPA-PSK; pmf=1 ;;
+        esac
+        wpa_ok set_network "$id" key_mgmt "$key_mgmt" || { fail "could not set key_mgmt"; return 1; }
+        wpa_ok set_network "$id" psk "\"$psk\"" || { fail "could not set PSK"; return 1; }
+        # PMF is optional for WPA2 and required for WPA3.
+        wpa set_network "$id" ieee80211w "$pmf" >/dev/null 2>&1
+    fi
+
+    wpa_ok enable_network "$id" || { fail "could not enable network"; return 1; }
+    wpa select_network "$id" >/dev/null 2>&1
+    wpa save_config >/dev/null 2>&1
+
+    say "connecting to \"$ssid\" ($enc)"
+    i=0
+    state=""
+    while [ "$i" -lt 30 ]; do
+        state=$(get_state)
+        [ "$state" = COMPLETED ] && break
+        sleep 1
+        i=$((i + 1))
+    done
+
+    if [ "$state" != COMPLETED ]; then
+        fail "association failed (state=${state:-unknown})"
+        return 1
+    fi
+
+    start_dhcp || return 1
+    remember_last "$ssid" "$psk" "$enc"
+    say "connected to \"$ssid\" - IP $(get_ip)"
+    return 0
+}
+
+disconnect_network() {
+    if [ -S "$CTRL/$IFACE" ]; then
+        wpa disconnect >/dev/null 2>&1
+        wpa remove_network all >/dev/null 2>&1
+    fi
+    stop_dhcp
+    say "disconnected"
+}
+
+scan_raw() {
+    wifi_up >/dev/null 2>&1 || return 1
+    wpa scan >/dev/null 2>&1
+    # A full scan across 2.4/5 GHz typically takes 3-6 seconds.  Waiting for
+    # the result count to change is not reliable because the previous scan
+    # may still be cached, so use a short fixed delay instead.
+    sleep 5
+    wpa scan_results 2>/dev/null | tail -n +2
+}
+
+cmd_scan_json() {
+    printf '['
+    scan_raw | awk -F'\t' '
+        BEGIN { first = 1 }
+        NF >= 5 && $5 != "" && !seen[$5]++ {
+            ssid = $5
+            gsub(/\\/, "\\\\", ssid)
+            gsub(/"/, "\\\"", ssid)
+            gsub(/\r/, "", ssid)
+            sec = "OPEN"
+            if ($4 ~ /SAE/) sec = "WPA3"
+            else if ($4 ~ /WPA2/ || $4 ~ /RSN/) sec = "WPA2"
+            else if ($4 ~ /WPA/) sec = "WPA"
+            printf "%s{\"ssid\":\"%s\",\"bssid\":\"%s\",\"freq\":%s,\"signal\":%s,\"security\":\"%s\"}", \
+                (first ? "" : ","), ssid, $1, $2, $3, sec
+            first = 0
+        }' | tr -d '\n'
+    printf ']\n'
+}
+
+cmd_scan() {
+    scan_raw | awk -F'\t' '
+        NF >= 5 && $5 != "" && !seen[$5]++ {
+            sec = "OPEN"
+            if ($4 ~ /SAE/) sec = "WPA3"
+            else if ($4 ~ /WPA2/ || $4 ~ /RSN/) sec = "WPA2"
+            else if ($4 ~ /WPA/) sec = "WPA"
+            printf "%4s dBm  %-6s  %s\n", $3, sec, $5
+        }'
+}
+
+cmd_status_json() {
+    up=false
+    [ -e "/sys/class/net/$IFACE" ] && up=true
+    state=off
+    if [ "$up" = true ]; then
+        wpa_state=$(get_state)
+        if [ "$wpa_state" = COMPLETED ] && [ -n "$(get_ip)" ]; then
+            state=connected
+        elif [ -S "$CTRL/$IFACE" ]; then
+            state=ready
+        else
+            state=starting
+        fi
+    fi
+    ssid=$(json_escape "$(get_ssid)")
+    ip=$(json_escape "$(get_ip)")
+    mac=$(json_escape "$(get_mac)")
+    wpa_state=$(json_escape "${wpa_state:-}")
+    printf '{"ok":true,"up":%s,"state":"%s","wpa_state":"%s","ssid":"%s","ip":"%s","mac":"%s"}\n' \
+        "$up" "$state" "$wpa_state" "$ssid" "$ip" "$mac"
+}
+
+cmd_status() {
+    echo "Interface : $IFACE"
+    if [ ! -e "/sys/class/net/$IFACE" ]; then
+        echo "State     : off (WMT/WiFi not initialised)"
+        return 0
+    fi
+    echo "State     : $(get_state)"
+    echo "SSID      : $(get_ssid)"
+    echo "IP        : $(get_ip)"
+    echo "MAC       : $(get_mac)"
+    if have dhcpcd; then
+        echo "DHCP      : $(running dhcpcd && echo running || echo stopped)"
+    fi
+}
+
+cmd_save() {
+    [ -f "$LAST" ] || { fail "no network has been connected in this session"; return 1; }
+    ssid=""; psk=""; enc=""
+    while IFS='=' read -r k v; do
+        case "$k" in
+            ssid) ssid=$v ;;
+            psk)  psk=$v ;;
+            enc)  enc=$v ;;
+        esac
+    done < "$LAST"
+
+    for base in /sdcard /data/media/0; do
+        [ -d "$base" ] || continue
+        mkdir -p "$base/Fox" 2>/dev/null || continue
+        {
+            printf 'ssid=%s\n' "$ssid"
+            printf 'psk=%s\n' "$psk"
+            printf 'enc=%s\n' "$enc"
+        } > "$base/Fox/wifi.conf" || continue
+        chmod 0600 "$base/Fox/wifi.conf" 2>/dev/null
+        say "saved credentials to $base/Fox/wifi.conf"
+        return 0
+    done
+    fail "no writable sdcard/data path"
+    return 1
+}
+
+cmd_forget() {
+    rm -f /sdcard/Fox/wifi.conf /data/media/0/Fox/wifi.conf 2>/dev/null
+    say "removed remembered WiFi network"
+}
+
+cmd_auto() {
+    conf=""
+    for f in /sdcard/Fox/wifi.conf /data/media/0/Fox/wifi.conf; do
+        [ -f "$f" ] && { conf=$f; break; }
+    done
+    [ -n "$conf" ] || return 0
+
+    ssid=""; psk=""; enc=""
+    while IFS='=' read -r k v; do
+        case "$k" in
+            ssid) ssid=$v ;;
+            psk)  psk=$v ;;
+            enc)  enc=$v ;;
+        esac
+    done < "$conf"
+
+    [ -n "$ssid" ] || return 0
+    say "auto-connecting to \"$ssid\" from $conf"
+    connect_network "$ssid" "$psk" "${enc:-WPA2}"
+}
+
+cmd_on() {
+    set_desired up
+    wifi_up || return 1
+    cmd_status
+    return 0
+}
+
+cmd_off() {
+    set_desired down
+    wifi_down
+    return 0
+}
+
+cmd_daemon() {
+    [ -f "$DESIRED" ] || set_desired up
+    say "foxwifi daemon started"
+
+    # Give recovery a moment to mount /sdcard, then rejoin the last network
+    # the user asked us to remember.  Failure is fine: the dashboard and the
+    # terminal can still connect manually.
+    if [ "$(get_desired)" = up ]; then
+        sleep 10
+        if take_lock; then
+            [ "$(get_desired)" = up ] && cmd_auto >/dev/null 2>&1
+            drop_lock
+        fi
+    fi
+
+    while :; do
+        if [ "$(get_desired)" = up ]; then
+            if take_lock; then
+                [ "$(get_desired)" = up ] && wifi_up >/dev/null 2>&1
+                drop_lock
+            fi
+        fi
+        if [ -f "$LOG" ]; then
+            size=$(wc -c < "$LOG" 2>/dev/null)
+            if [ -n "$size" ] && [ "$size" -gt 262144 ]; then
+                tail -c 131072 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+            fi
+        fi
+        sleep 30
+    done
+}
+
+take_lock() {
+    i=0
+    while ! mkdir "$LOCK" 2>/dev/null; do
+        pid=$(cat "$LOCK/pid" 2>/dev/null)
+        if [ -n "$pid" ]; then
+            if ! kill -0 "$pid" 2>/dev/null; then
+                log "removing stale lock from $pid"
+                rm -rf "$LOCK"
+                continue
+            fi
+        elif [ "$i" -ge 5 ]; then
+            # The owner died before it could write its pid.
+            rm -rf "$LOCK"
+            continue
+        fi
+        i=$((i + 1))
+        if [ "$i" -gt 30 ]; then
+            fail "another foxwifi operation is running"
+            return 1
+        fi
+        sleep 1
+    done
+    echo $$ > "$LOCK/pid"
+    return 0
+}
+
+drop_lock() {
+    [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"
+    return 0
+}
+
+usage() {
+    cat <<EOF
+Usage: foxwifi <command> [args]
+
+  on | off | restart        Start/stop WMT + wpa_supplicant
+  status [--json]           Show link state
+  scan [--json]             Scan for networks
+  connect SSID [PSK] [OPEN|WPA|WPA2|WPA3]
+  disconnect
+  save | forget | auto      Remember/forget/auto-connect a network
+  daemon                    Init service (keeps the link alive)
+  log                       Show the log
+EOF
+}
+
+case "$1" in
+    on|start)
+        take_lock || exit 1
+        cmd_on
+        rc=$?
+        drop_lock
+        exit $rc
+        ;;
+    off|stop)
+        take_lock || exit 1
+        cmd_off
+        rc=$?
+        drop_lock
+        exit $rc
+        ;;
+    restart)
+        take_lock || exit 1
+        wifi_down
+        cmd_on
+        rc=$?
+        drop_lock
+        exit $rc
+        ;;
+    status)
+        if [ "$2" = "--json" ] || [ "$2" = "json" ]; then cmd_status_json; else cmd_status; fi
+        ;;
+    scan)
+        take_lock || exit 1
+        if [ "$2" = "--json" ] || [ "$2" = "json" ]; then cmd_scan_json; else cmd_scan; fi
+        rc=$?
+        drop_lock
+        exit $rc
+        ;;
+    connect)
+        take_lock || exit 1
+        connect_network "$2" "$3" "${4:-WPA2}"
+        rc=$?
+        drop_lock
+        exit $rc
+        ;;
+    disconnect)
+        take_lock || exit 1
+        disconnect_network
+        rc=$?
+        drop_lock
+        exit $rc
+        ;;
+    save)
+        take_lock || exit 1
+        cmd_save
+        rc=$?
+        drop_lock
+        exit $rc
+        ;;
+    forget)
+        take_lock || exit 1
+        cmd_forget
+        rc=$?
+        drop_lock
+        exit $rc
+        ;;
+    auto)
+        take_lock || exit 1
+        cmd_auto
+        rc=$?
+        drop_lock
+        exit $rc
+        ;;
+    daemon)
+        cmd_daemon
+        ;;
+    log)
+        tail -n "${2:-80}" "$LOG" 2>/dev/null
+        ;;
+    init)
+        cmd_on
+        ;;
+    *)
+        usage
+        ;;
+esac

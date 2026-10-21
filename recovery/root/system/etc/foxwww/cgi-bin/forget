@@ -1,0 +1,16 @@
+#!/system/bin/sh
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_post
+require_token
+
+out=$("$FOXWIFI" forget 2>&1)
+rc=$?
+message=$(printf '%s\n' "$out" | tail -n 1)
+
+if [ "$rc" -ne 0 ]; then
+    json_error "500 Internal Server Error" "${message:-could not remove saved network}"
+fi
+
+json_header
+printf '{"ok":true,"message":"%s"}\n' "$(json_escape "$message")"

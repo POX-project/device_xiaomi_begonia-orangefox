@@ -1,0 +1,13 @@
+#!/system/bin/sh
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+json_header
+
+wifi=$("$FOXWIFI" status --json 2>/dev/null)
+[ -n "$wifi" ] || wifi='{"ok":false,"state":"off"}'
+
+token_required=false
+[ -s "$TOKEN_FILE" ] && token_required=true
+
+printf '{"ok":true,"wifi":%s,"web":{"token_required":%s}}\n' \
+    "$wifi" "$token_required"

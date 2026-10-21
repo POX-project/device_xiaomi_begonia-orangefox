@@ -171,6 +171,10 @@ TW_FRAMERATE := 60
 TW_CUSTOM_CPU_TEMP_PATH := /sys/devices/virtual/thermal/thermal_zone4/temp
 TW_PREPARE_DATA_MEDIA_EARLY := true
 
+# Recovery WiFi: the MediaTek WLAN driver registers with cfg80211, so
+# wpa_supplicant must be built with the nl80211 driver interface.
+BOARD_WPA_SUPPLICANT_DRIVER := NL80211
+
 # Debug flags
 TWRP_INCLUDE_LOGCAT := true
 TARGET_USES_LOGD := true

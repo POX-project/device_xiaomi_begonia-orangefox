@@ -1,0 +1,32 @@
+#!/system/bin/sh
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_post
+require_token
+
+ssid=$(body_param ssid)
+psk=$(body_param psk)
+enc=$(body_param enc)
+remember=$(body_param remember)
+
+[ -n "$ssid" ] || json_error "400 Bad Request" "SSID is required"
+
+case "$enc" in
+    OPEN|open|WPA|wpa|WPA2|wpa2|WPA3|wpa3|SAE|sae) ;;
+    *) enc=WPA2 ;;
+esac
+
+out=$("$FOXWIFI" connect "$ssid" "$psk" "$enc" 2>&1)
+rc=$?
+message=$(printf '%s\n' "$out" | tail -n 1)
+
+if [ "$rc" -ne 0 ]; then
+    json_error "500 Internal Server Error" "${message:-connection failed}"
+fi
+
+if [ "$remember" = 1 ] || [ "$remember" = true ] || [ "$remember" = on ]; then
+    "$FOXWIFI" save >/dev/null 2>&1
+fi
+
+json_header
+printf '{"ok":true,"message":"%s"}\n' "$(json_escape "$message")"

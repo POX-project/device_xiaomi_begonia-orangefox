@@ -1,0 +1,30 @@
+#!/system/bin/sh
+# BusyBox udhcpc hook used by foxwifi when dhcpcd cannot get a lease
+# (for example when /data is encrypted and /data/misc/dhcp is unavailable).
+#
+# udhcpc passes the lease as environment variables and calls this script with
+# deconfig, bound, renew or leasefail as $1.
+
+case "$1" in
+    deconfig)
+        ifconfig "$interface" 0.0.0.0 2>/dev/null
+        ;;
+    bound|renew)
+        if [ -n "$broadcast" ]; then
+            ifconfig "$interface" "$ip" netmask "$subnet" broadcast "$broadcast" up
+        else
+            ifconfig "$interface" "$ip" netmask "$subnet" up
+        fi
+        if [ -n "$router" ]; then
+            for r in $router; do
+                route add default gw "$r" dev "$interface" 2>/dev/null && break
+            done
+        fi
+        : > /etc/resolv.conf 2>/dev/null
+        for d in $dns; do
+            echo "nameserver $d" >> /etc/resolv.conf 2>/dev/null
+        done
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,28 @@
+# MediaTek WiFi + FoxWeb dashboard for OrangeFox recovery.
+#
+# The kernel already contains the whole CONSYS/WMT/WLAN stack.  These two
+# services only bring up the userspace side:
+#   foxwifi - loads WMT firmware, starts wpa_supplicant and keeps it alive
+#   foxweb  - BusyBox httpd serving /system/etc/foxwww on port 8080
+#
+# Both are intentionally tolerant of failure: if WMT cannot load, recovery
+# still boots normally and foxwifi retries every 30 seconds.
+
+service foxwifi /system/bin/foxwifi daemon
+    class default
+    user root
+    group root system
+    seclabel u:r:recovery:s0
+    disabled
+
+service foxweb /system/bin/foxweb serve
+    class default
+    user root
+    group root system
+    seclabel u:r:recovery:s0
+    disabled
+
+on boot
+    mkdir /tmp/foxwifi 0770 root system
+    start foxwifi
+    start foxweb

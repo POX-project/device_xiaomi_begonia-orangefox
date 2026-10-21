@@ -1,0 +1,10 @@
+#!/system/bin/sh
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+json_header
+
+out=$("$FOXWIFI" scan --json 2>/dev/null)
+case "$out" in
+    \[*\]) printf '%s\n' "$out" ;;
+    *)     printf '[]\n' ;;
+esac

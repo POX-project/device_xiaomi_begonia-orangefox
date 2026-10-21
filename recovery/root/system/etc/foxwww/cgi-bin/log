@@ -1,0 +1,12 @@
+#!/system/bin/sh
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_token
+
+text_header
+
+echo "=== foxwifi ==="
+tail -n "${LINES:-120}" /tmp/foxwifi.log 2>/dev/null
+echo
+echo "=== foxweb ==="
+tail -n "${LINES:-120}" /tmp/foxweb.log 2>/dev/null

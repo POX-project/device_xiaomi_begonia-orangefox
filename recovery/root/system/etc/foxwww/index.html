@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>FoxWeb &middot; begonia recovery</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">OF</div>
+    <div>
+      <h1>FoxWeb</h1>
+      <p>OrangeFox recovery &middot; begonia</p>
+    </div>
+  </div>
+  <div id="statusPill" class="pill off">
+    <span class="dot"></span>
+    <span id="statusText">Checking&hellip;</span>
+  </div>
+</header>
+
+<main>
+  <section class="card hero">
+    <div class="hero-copy">
+      <p class="eyebrow">WiFi status</p>
+      <h2 id="ssid">Not connected</h2>
+      <p id="detail" class="muted">Starting the WiFi stack&hellip;</p>
+      <div class="actions">
+        <button id="btnScan" class="primary">Scan networks</button>
+        <button id="btnWifi" class="ghost">Start WiFi</button>
+        <button id="btnDisconnect" class="ghost danger">Disconnect</button>
+      </div>
+    </div>
+    <div class="metrics">
+      <div><span>IP address</span><strong id="ip">&mdash;</strong></div>
+      <div><span>MAC address</span><strong id="mac">&mdash;</strong></div>
+      <div><span>Link state</span><strong id="state">&mdash;</strong></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Nearby</p>
+        <h2>Networks</h2>
+      </div>
+      <button id="btnRescan" class="ghost small">Refresh</button>
+    </div>
+    <p id="scanState" class="muted small">Scan to look for networks.</p>
+    <ul id="networks" class="networks"></ul>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Manual</p>
+        <h2>Join a hidden network</h2>
+      </div>
+    </div>
+    <form id="manualForm" class="form">
+      <label>Network name
+        <input id="manualSsid" autocomplete="off" maxlength="32" required>
+      </label>
+      <label>Password
+        <input id="manualPsk" type="password" autocomplete="off" maxlength="64" placeholder="Leave empty for open networks">
+      </label>
+      <label class="check"><input id="manualRemember" type="checkbox"> Remember this network on /sdcard</label>
+      <button class="primary" type="submit">Connect</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Power</p>
+        <h2>Recovery actions</h2>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="ghost" data-reboot="recovery">Reboot recovery</button>
+      <button class="ghost" data-reboot="system">Reboot system</button>
+      <button class="ghost" data-reboot="bootloader">Bootloader</button>
+    </div>
+    <p class="muted small">These actions need the access token. You can also power off the device from the recovery UI.</p>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Diagnostics</p>
+        <h2>Log</h2>
+      </div>
+      <button id="btnLog" class="ghost small">Show</button>
+    </div>
+    <pre id="log" class="log hidden"></pre>
+  </section>
+</main>
+
+<footer>
+  FoxWeb runs entirely on this device. No cloud, no telemetry.
+</footer>
+
+<div id="toast" class="toast hidden" role="status"></div>
+
+<dialog id="connectDialog">
+  <form method="dialog" id="connectForm">
+    <h2 id="dialogTitle">Connect</h2>
+    <p id="dialogSub" class="muted small"></p>
+    <label>Password
+      <input id="dialogPsk" type="password" autocomplete="off" maxlength="64">
+    </label>
+    <label class="check"><input id="dialogRemember" type="checkbox"> Remember this network on /sdcard</label>
+    <div class="actions">
+      <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+      <button id="dialogConnect" value="connect" class="primary">Connect</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="tokenDialog">
+  <form method="dialog" id="tokenForm">
+    <h2>Access token</h2>
+    <p class="muted small">Run <code>foxweb token</code> in the recovery terminal, or open the one-click URL printed by <code>foxweb status</code>.</p>
+    <label>Token
+      <input id="tokenInput" autocomplete="off">
+    </label>
+    <div class="actions">
+      <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+      <button value="save" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

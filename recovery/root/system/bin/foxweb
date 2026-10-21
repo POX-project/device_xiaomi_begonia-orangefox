@@ -1,0 +1,195 @@
+#!/system/bin/sh
+#
+# foxweb - tiny browser dashboard for OrangeFox recovery (begonia).
+#
+# The HTTP server is BusyBox httpd (static, shipped in /system/bin/busybox), with
+# CGI endpoints in /system/etc/foxwww/cgi-bin.  It is supervised by init as
+# the "foxweb" service and listens on 0.0.0.0:8080.
+#
+# Useful commands:
+#   foxweb start | stop | restart | status
+#   foxweb url              print the URL to open
+#   foxweb token            print the access token
+#   foxweb set-token VALUE  change the token and restart
+#
+# The same dashboard is reachable over USB without WiFi:
+#   adb forward tcp:8080 tcp:8080
+#   # then open http://localhost:8080/
+#
+
+PATH=/sbin:/system/bin:/system/xbin:/vendor/bin
+export PATH
+
+BB=/system/bin/busybox
+[ -x "$BB" ] || BB=/sbin/busybox
+[ -x "$BB" ] || BB=
+
+PORT=${FOXWEB_PORT:-8080}
+DOC=/system/etc/foxwww
+TOKEN_FILE=/tmp/foxweb.token
+LOG=/tmp/foxweb.log
+PID_FILE=/tmp/foxweb.pid
+IFACE=wlan0
+
+log() {
+    echo "$(date '+%H:%M:%S') $*" >> "$LOG" 2>/dev/null
+}
+
+get_ip() {
+    if command -v ip >/dev/null 2>&1; then
+        addr=$(ip -o -4 addr show "$IFACE" 2>/dev/null \
+            | awk '{print $4}' | cut -d/ -f1 | head -n 1)
+        if [ -n "$addr" ]; then
+            echo "$addr"
+            return 0
+        fi
+    fi
+    ifconfig "$IFACE" 2>/dev/null | awk '
+        /inet addr:/ {
+            for (i = 1; i <= NF; i++)
+                if ($i ~ /^addr:/) { sub(/^addr:/, "", $i); print $i; exit }
+        }
+        /inet / {
+            for (i = 1; i <= NF; i++)
+                if ($i == "inet") {
+                    addr = $(i + 1)
+                    sub(/\/.*/, "", addr)
+                    print addr
+                    exit
+                }
+        }'
+}
+
+gen_token() {
+    if [ -n "$BB" ]; then
+        "$BB" od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'
+    else
+        od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'
+    fi
+}
+
+ensure_token() {
+    [ -s "$TOKEN_FILE" ] && return 0
+    token=$(gen_token)
+    [ -n "$token" ] || token="fox$(date +%s)"
+    printf '%s\n' "$token" > "$TOKEN_FILE"
+    chmod 0600 "$TOKEN_FILE" 2>/dev/null
+    log "generated access token"
+}
+
+serve() {
+    ensure_token
+    if [ ! -x "$BB" ]; then
+        echo "foxweb: $BB is missing" >&2
+        exit 1
+    fi
+    if [ ! -f "$DOC/index.html" ]; then
+        echo "foxweb: $DOC/index.html is missing" >&2
+        exit 1
+    fi
+    echo $$ > "$PID_FILE"
+    log "starting httpd on port $PORT, docroot $DOC"
+    ip=$(get_ip)
+    [ -n "$ip" ] || ip=127.0.0.1
+    echo "foxweb: http://$ip:$PORT/"
+    exec "$BB" httpd -f -p "$PORT" -h "$DOC" -c "$DOC/httpd.conf" >>"$LOG" 2>&1
+}
+
+start() {
+    setprop ctl.start foxweb 2>/dev/null
+    sleep 1
+    status
+}
+
+stop() {
+    setprop ctl.stop foxweb 2>/dev/null
+    if [ -f "$PID_FILE" ]; then
+        pid=$(cat "$PID_FILE" 2>/dev/null)
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null
+        rm -f "$PID_FILE"
+    fi
+    log "stopped"
+}
+
+status() {
+    token=""
+    [ -f "$TOKEN_FILE" ] && token=$(cat "$TOKEN_FILE")
+    ip=$(get_ip)
+    if [ -n "$BB" ] && "$BB" pidof httpd >/dev/null 2>&1; then
+        server=running
+    else
+        server=stopped
+    fi
+    echo "FoxWeb    : $server on port $PORT"
+    if [ -n "$ip" ]; then
+        echo "URL       : http://$ip:$PORT/"
+        if [ -n "$token" ]; then
+            echo "One-click : http://$ip:$PORT/#token=$token"
+        fi
+    else
+        echo "URL       : no WiFi IP yet (use adb forward)"
+    fi
+    echo "Token     : ${token:-<not generated yet>}"
+    echo "USB       : adb forward tcp:$PORT tcp:$PORT, then http://localhost:$PORT/"
+}
+
+case "$1" in
+    serve)
+        serve
+        ;;
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        sleep 1
+        start
+        ;;
+    status)
+        status
+        ;;
+    url)
+        ip=$(get_ip)
+        [ -n "$ip" ] || ip=127.0.0.1
+        if [ -s "$TOKEN_FILE" ]; then
+            echo "http://$ip:$PORT/#token=$(cat "$TOKEN_FILE")"
+        else
+            echo "http://$ip:$PORT/"
+        fi
+        ;;
+    token)
+        ensure_token
+        cat "$TOKEN_FILE"
+        ;;
+    set-token)
+        [ -n "$2" ] || { echo "usage: foxweb set-token VALUE" >&2; exit 1; }
+        printf '%s\n' "$2" > "$TOKEN_FILE"
+        chmod 0600 "$TOKEN_FILE" 2>/dev/null
+        log "access token changed"
+        stop
+        sleep 1
+        start
+        ;;
+    log)
+        tail -n "${2:-80}" "$LOG" 2>/dev/null
+        ;;
+    *)
+        cat <<EOF
+Usage: foxweb <command>
+
+  start | stop | restart | status
+  url                 Print the dashboard URL
+  token               Print the access token
+  set-token VALUE     Set a custom access token
+  log [lines]         Show the server log
+  serve               Foreground server (used by init)
+
+The dashboard can also be reached over USB:
+  adb forward tcp:$PORT tcp:$PORT
+  http://localhost:$PORT/
+EOF
+        ;;
+esac

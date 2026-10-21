@@ -44,3 +44,31 @@ PRODUCT_PACKAGES += \
 # fastbootd is required to flash/erase logical partitions on dynamic devices
 PRODUCT_PACKAGES += \
     fastbootd
+
+# Recovery WiFi.
+#
+# The begonia kernel has the MediaTek WMT/WLAN stack built in, but recovery
+# needs the userspace half: wpa_supplicant, wpa_cli, the MediaTek firmware
+# loader and a DHCP client.  The firmware loader, dhcpcd, BusyBox and the
+# dashboard live in recovery/root and are packed into the ramdisk; only
+# wpa_supplicant/wpa_cli are built from source (external/wpa_supplicant_8).
+#
+# CONFIG_CTRL_IFACE_HIDL is disabled for recovery by the builder workflow so
+# wpa_cli can talk to the daemon over the unix control socket.
+PRODUCT_PACKAGES += \
+    wpa_supplicant \
+    wpa_cli
+
+TARGET_RECOVERY_DEVICE_MODULES += \
+    wpa_supplicant \
+    wpa_cli
+
+TW_RECOVERY_ADDITIONAL_RELINK_BINARY_FILES += \
+    $(TARGET_OUT_VENDOR_EXECUTABLES)/hw/wpa_supplicant \
+    $(TARGET_OUT_VENDOR_EXECUTABLES)/wpa_cli
+
+TW_RECOVERY_ADDITIONAL_RELINK_LIBRARY_FILES += \
+    $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/libkeystore-wifi-hidl.so \
+    $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/libkeystore-engine-wifi-hidl.so \
+    $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/libnl.so \
+    $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/libssl.so
