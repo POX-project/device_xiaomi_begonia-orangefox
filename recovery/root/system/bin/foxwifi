@@ -57,6 +57,10 @@ FW_DIR=/vendor/firmware
 FW_RUN=$TMP/firmware
 
 mkdir -p "$TMP" "$CTRL" 2>/dev/null
+# Recovery runs with umask 077.  wpa_supplicant drops to AID_WIFI (1010)
+# before it reads its config and creates the control socket, so root-only
+# directories make it exit immediately with EACCES.
+chmod 0777 "$TMP" "$CTRL" 2>/dev/null
 
 # Android's fs_config assigns mode 0644 to files under /system/etc, so the
 # executable bit on the DHCP hooks is lost when the ramdisk is packed.  Put it
@@ -226,12 +230,20 @@ prepare_firmware() {
 write_conf() {
     {
         echo "ctrl_interface=$CTRL"
-        echo "ctrl_interface_group=0"
+        # Do not set ctrl_interface_group=0: wpa_supplicant runs as
+        # AID_WIFI and cannot chown the socket to root.  The socket is
+        # created with the supplicant's own wifi group instead.
         echo "update_config=1"
         echo "country=US"
         echo "ap_scan=1"
     } > "$CONF"
-    chmod 0600 "$CONF" 2>/dev/null
+    # wpa_supplicant is not running as root by the time it opens this file.
+    # Give it to AID_WIFI, with a readable fallback if chown is unavailable.
+    if ! chown 1010:1010 "$CONF" 2>/dev/null; then
+        chmod 0644 "$CONF" 2>/dev/null
+    else
+        chmod 0600 "$CONF" 2>/dev/null
+    fi
 }
 
 get_prop() {
@@ -253,9 +265,53 @@ start_wlan_assistant() {
     echo $! > "$TMP/wlan_assistant.pid"
 }
 
+dump_wpa_logcat() {
+    have logcat || return 0
+    logcat -d -v brief -s wpa_supplicant wpa_cli 2>/dev/null | tail -n 60
+}
+
 dump_wmt_logcat() {
     have logcat || return 0
-    logcat -d -v brief -s wmt_loader wmt_launcher wlan_assistant 2>/dev/null | tail -n 40
+    logcat -d -v brief -s wmt_loader wmt_launcher wlan_assistant \
+        wpa_supplicant wpa_cli 2>/dev/null | tail -n 80
+}
+
+power_on_wlan() {
+    # Writing 1 to /dev/wmtWifi is the actual WMT function-on call.  The
+    # write can block while the driver waits for the ROM patch, so cap each
+    # attempt.  wmt_launcher takes several seconds to load the patch on a
+    # cold boot; retry instead of failing the first write.
+    attempt=0
+    while [ "$attempt" -lt 4 ]; do
+        attempt=$((attempt + 1))
+        if [ ! -e /dev/wmtWifi ]; then
+            log "/dev/wmtWifi is missing (attempt $attempt/4)"
+            sleep 3
+            continue
+        fi
+
+        # A cold WMT power-on can take ~30 seconds while the ROM patch is
+        # downloaded.  Give it time; killing the write too early leaves the
+        # WMT state machine in a failed state.
+        if have timeout; then
+            timeout 45 sh -c "printf '1' > /dev/wmtWifi" 2>>"$LOG"
+            rc=$?
+        else
+            printf '1' > /dev/wmtWifi 2>>"$LOG"
+            rc=$?
+        fi
+        if [ "$rc" -eq 0 ]; then
+            log "powered on WLAN block via /dev/wmtWifi"
+            return 0
+        fi
+        if [ "$rc" -eq 124 ]; then
+            log "timed out writing /dev/wmtWifi (attempt $attempt/4)"
+        else
+            log "could not write /dev/wmtWifi (rc=$rc, attempt $attempt/4)"
+        fi
+        sleep 3
+    done
+    return 1
 }
 
 start_wmt() {
@@ -317,43 +373,36 @@ start_wmt() {
         prepare_firmware || \
             log "firmware preparation failed; trying $FW_DIR anyway"
 
-        # A launcher left over from an earlier failed attempt may still be
-        # using the wrong patch path.  Stop it so this attempt starts clean.
-        if running wmt_launcher; then
-            log "stopping stale wmt_launcher"
-            if [ -n "$BB" ]; then
-                "$BB" pkill wmt_launcher >/dev/null 2>&1
-            else
-                pkill wmt_launcher >/dev/null 2>&1
-            fi
-            sleep 1
-        fi
-
-        if [ -x /system/bin/wmt_launcher ]; then
+        if [ -x /system/bin/wmt_launcher ] && ! running wmt_launcher; then
             log "starting wmt_launcher -p $FW_DIR/ -o 1"
             ( /system/bin/wmt_launcher -p "$FW_DIR/" -o 1 >>"$LOG" 2>&1 ) &
             echo $! > "$TMP/wmt_launcher.pid"
-            sleep 1
+            # Let the launcher open /dev/stpwmt and enter its power-on flow
+            # before the framework-style /dev/wmtWifi write.
+            sleep 2
+        elif running wmt_launcher; then
+            log "wmt_launcher already running"
         fi
 
-        # Stock init passes `-o 1` to wmt_launcher; some recovery trees
-        # instead write 1 to /dev/wmtWifi after starting the launcher.  Do
-        # both: the ioctl path is the stock one, while the write covers
-        # kernels whose launcher ignores -o or was already running when the
-        # first bring-up attempt started.
-        if [ -e /dev/wmtWifi ]; then
-            log "powering on WLAN block via /dev/wmtWifi"
-            printf '1\n' > /dev/wmtWifi 2>>"$LOG" || \
-                log "could not write /dev/wmtWifi"
-        else
-            log "/dev/wmtWifi is missing before WLAN power-on"
-        fi
-
-        # Stock MediaTek init starts wlan_assistant as soon as
-        # vendor.connsys.driver.ready is set, before it expects wlan0.  On
-        # some kernels the interface only appears after NVRAM/MAC setup, so
-        # waiting for wlan0 first would deadlock the bring-up.
+        # Stock MediaTek init starts wlan_assistant from class main, before
+        # the framework powers the WLAN block on.  Start it first so the
+        # NVRAM/MAC data is available when WMT brings the chip up.
         start_wlan_assistant
+
+        # wmt_launcher only initialises the chip/patch path.  The WLAN
+        # function itself is powered on through /dev/wmtWifi; do not start
+        # wpa_supplicant until that succeeds, or it will fail with an
+        # unusable wlan0.
+        if ! power_on_wlan; then
+            wmt_tail=$(dump_wmt_logcat)
+            [ -n "$wmt_tail" ] && printf '%s\n' "$wmt_tail" >>"$LOG"
+            # Some launcher/kernel combinations power the block on through
+            # -o 1 and reject the extra /dev/wmtWifi write.  Do not give up
+            # before trying the supplicant: if wlan0 is usable it will work,
+            # and if not its logcat tells us why.
+            log "warning: could not power on WLAN block; trying wpa_supplicant anyway"
+            rm -f "$TMP/wmt.ready"
+        fi
 
         i=0
         while [ "$i" -lt 20 ]; do
@@ -396,12 +445,38 @@ start_wmt() {
 
 link_up() {
     [ -e "/sys/class/net/$IFACE" ] || return 1
-    ifconfig "$IFACE" up >>"$LOG" 2>&1
+    if ifconfig "$IFACE" up >>"$LOG" 2>&1; then
+        return 0
+    fi
+    log "could not bring up $IFACE"
+    return 1
 }
 
 start_supp() {
-    mkdir -p "$CTRL" 2>/dev/null
+    mkdir -p "$TMP" "$CTRL" 2>/dev/null
+    chmod 0777 "$TMP" "$CTRL" 2>/dev/null
     [ -f "$CONF" ] || write_conf
+
+    # Android's wpa_supplicant drops from root to AID_WIFI (1010) before
+    # opening its config, pid file and control socket.  Existing files from
+    # an older run may still be root-owned; repair them here as well.
+    if ! chown 1010:1010 "$CONF" 2>/dev/null; then
+        chmod 0644 "$CONF" 2>/dev/null
+    else
+        chmod 0600 "$CONF" 2>/dev/null
+    fi
+    chown 1010:1010 "$TMP" "$CTRL" 2>/dev/null
+    chmod 0777 "$TMP" "$CTRL" 2>/dev/null
+
+    # Match the stock init.connectivity.rc directories.  The custom $CTRL
+    # is used below, but some supplicant builds still probe this path.
+    for d in /data/vendor/wifi /data/vendor/wifi/wpa \
+             /data/vendor/wifi/wpa/sockets; do
+        mkdir -p "$d" 2>/dev/null || break
+    done
+    chown -R 1010:1010 /data/vendor/wifi 2>/dev/null
+    chmod 0770 /data/vendor/wifi /data/vendor/wifi/wpa \
+              /data/vendor/wifi/wpa/sockets 2>/dev/null
 
     if running wpa_supplicant && [ -S "$CTRL/$IFACE" ]; then
         return 0
@@ -421,9 +496,19 @@ start_supp() {
     fi
 
     log "starting wpa_supplicant"
-    if ! wpa_supplicant -B -Dnl80211 -i"$IFACE" -c"$CONF" \
-            -P"$TMP/wpa.pid" >>"$LOG" 2>&1; then
-        log "wpa_supplicant failed to start"
+    wpa_supplicant -B -Dnl80211 -i"$IFACE" -c"$CONF" \
+        -P"$TMP/wpa.pid" >>"$LOG" 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        log "wpa_supplicant failed to start (rc=$rc)"
+        {
+            echo "== wpa_supplicant logcat =="
+            dump_wpa_logcat
+            echo "== supplicant files =="
+            ls -ld "$TMP" "$CTRL" "$CONF" 2>&1
+        } >>"$LOG" 2>&1
+        fail "wpa_supplicant failed to start (rc=$rc)"
+        return 1
     fi
 
     i=0
@@ -433,6 +518,12 @@ start_supp() {
         i=$((i + 1))
     done
 
+    {
+        echo "== wpa_supplicant logcat (no control socket) =="
+        dump_wpa_logcat
+        echo "== supplicant files =="
+        ls -ld "$TMP" "$CTRL" "$CONF" 2>&1
+    } >>"$LOG" 2>&1
     fail "wpa_supplicant control socket did not appear"
     return 1
 }
@@ -694,8 +785,9 @@ cmd_diag() {
     cmd_status
     echo
     echo "== WMT properties =="
-    for p in vendor.connsys.driver.ready persist.vendor.connsys.chipid \
-             vendor.connsys.adie.chipid ro.vendor.wlan.gen; do
+    for p in vendor.connsys.driver.ready vendor.connsys.formeta.ready \
+             persist.vendor.connsys.chipid vendor.connsys.adie.chipid \
+             ro.vendor.wlan.gen; do
         printf '%-38s %s\n' "$p" "$(get_prop "$p")"
     done
     echo
