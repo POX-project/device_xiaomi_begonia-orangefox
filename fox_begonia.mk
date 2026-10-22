@@ -4,6 +4,9 @@
 # so plain TWRP/SHRP builds of this tree are unaffected.
 #
 
+# Build metadata shown in recovery (About / build info).
+OF_MAINTAINER := A X
+
 # Encryption / MIUI
 OF_DONT_PATCH_ENCRYPTED_DEVICE := 1
 OF_NO_MIUI_PATCH_WARNING := 1
