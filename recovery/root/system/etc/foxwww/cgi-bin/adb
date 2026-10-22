@@ -1,0 +1,39 @@
+#!/system/bin/sh
+# Status and on/off control for the wireless ADB helper.
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_token
+
+if [ "${REQUEST_METHOD:-GET}" = POST ]; then
+    read_body
+    action=$(body_param action)
+    case "$action" in
+        on|off) ;;
+        *) json_error "400 Bad Request" "action must be on or off" ;;
+    esac
+
+    out=$("$FOXADB_BIN" "$action" 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        message=$(printf '%s\n' "$out" | tail -n 1)
+        json_error "500 Internal Server Error" "${message:-ADB action failed}"
+    fi
+else
+    action=
+fi
+
+status=$("$FOXADB_BIN" status --json 2>/dev/null)
+case "$status" in
+    \{*) ;;
+    *) status='{"ok":false,"error":"foxadb status failed"}' ;;
+esac
+
+if [ -n "$action" ]; then
+    message=$(printf '%s\n' "$out" | tail -n 1)
+    json_header
+    printf '{"ok":true,"message":"%s","adb":%s}\n' \
+        "$(json_escape "$message")" "$status"
+else
+    json_header
+    printf '{"ok":true,"adb":%s}\n' "$status"
+fi

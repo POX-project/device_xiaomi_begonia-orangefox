@@ -3,6 +3,7 @@
 
 require_post
 require_token
+read_body
 
 action=$(body_param action)
 case "$action" in

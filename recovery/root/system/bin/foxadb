@@ -1,0 +1,200 @@
+#!/system/bin/sh
+#
+# foxadb - toggle adbd's TCP listener for wireless ADB in recovery.
+#
+# TWRP/OrangeFox starts adbd for USB at boot.  Android's adbd reads
+# service.adb.tcp.port when it starts; setting the property alone does not
+# affect an already-running daemon, so the helper restarts the init service.
+#
+# Usage:
+#   foxadb on | off | status [--json] | url | log
+#
+
+PATH=/sbin:/system/bin:/system/xbin:/vendor/bin
+export PATH
+
+BB=/system/bin/busybox
+[ -x "$BB" ] || BB=/sbin/busybox
+[ -x "$BB" ] || BB=
+
+IFACE=${FOXADB_IFACE:-wlan0}
+PORT=${FOXADB_PORT:-5555}
+LOG=/tmp/foxadb.log
+
+log() {
+    echo "$(date '+%H:%M:%S') $*" >> "$LOG" 2>/dev/null
+}
+
+say() {
+    echo "$*"
+    log "$*"
+}
+
+fail() {
+    say "foxadb: $*" >&2
+    return 1
+}
+
+running() {
+    if [ -n "$BB" ]; then
+        "$BB" pidof adbd >/dev/null 2>&1
+    else
+        pidof adbd >/dev/null 2>&1
+    fi
+}
+
+get_ip() {
+    if command -v ip >/dev/null 2>&1; then
+        addr=$(ip -o -4 addr show "$IFACE" 2>/dev/null \
+            | awk '{print $4}' | cut -d/ -f1 | head -n 1)
+        if [ -n "$addr" ]; then
+            echo "$addr"
+            return 0
+        fi
+    fi
+    ifconfig "$IFACE" 2>/dev/null | awk '
+        /inet addr:/ {
+            for (i = 1; i <= NF; i++)
+                if ($i ~ /^addr:/) { sub(/^addr:/, "", $i); print $i; exit }
+        }
+        /inet / {
+            for (i = 1; i <= NF; i++)
+                if ($i == "inet") {
+                    addr = $(i + 1)
+                    sub(/\/.*/, "", addr)
+                    print addr
+                    exit
+                }
+        }'
+}
+
+adb_prop() {
+    getprop service.adb.tcp.port 2>/dev/null
+}
+
+enabled() {
+    [ "$(adb_prop)" = "$PORT" ]
+}
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\r\n' | tr '\t' ' '
+}
+
+restart_adbd() {
+    # ctl.restart is handled by init even when the adbd service is disabled by
+    # the current USB configuration.  Fall back to start if it is not running
+    # afterwards (for example if adbd had never been started in this boot).
+    setprop ctl.restart adbd 2>/dev/null
+    sleep 2
+    if ! running; then
+        setprop ctl.start adbd 2>/dev/null
+        sleep 2
+    fi
+}
+
+show_status() {
+    ip=$(get_ip)
+    if enabled; then
+        state=enabled
+    else
+        state=disabled
+    fi
+    if running; then
+        daemon=running
+    else
+        daemon=stopped
+    fi
+
+    echo "ADB over WiFi : $state"
+    echo "adbd          : $daemon"
+    echo "Port          : $PORT"
+    if [ -n "$ip" ]; then
+        echo "IP            : $ip"
+        [ "$state" = enabled ] && echo "Connect       : adb connect $ip:$PORT"
+    else
+        echo "IP            : no WiFi address"
+    fi
+    echo "USB ADB       : still available independently"
+}
+
+status_json() {
+    ip=$(get_ip)
+    if enabled; then
+        enabled_json=true
+    else
+        enabled_json=false
+    fi
+    if running; then
+        running_json=true
+    else
+        running_json=false
+    fi
+
+    if [ -n "$ip" ]; then
+        endpoint_json="\"$ip:$PORT\""
+        command_json="\"adb connect $ip:$PORT\""
+        ip_json="\"$(json_escape "$ip")\""
+    else
+        endpoint_json=null
+        command_json=null
+        ip_json=null
+    fi
+
+    printf '{"ok":true,"enabled":%s,"running":%s,"ip":%s,"port":%s,"endpoint":%s,"command":%s}\n' \
+        "$enabled_json" "$running_json" "$ip_json" "$PORT" "$endpoint_json" "$command_json"
+}
+
+case "$1" in
+    on)
+        ip=$(get_ip)
+        setprop service.adb.tcp.port "$PORT" || { fail "could not set service.adb.tcp.port"; exit 1; }
+        restart_adbd
+        if ! running; then
+            fail "adbd is not running after restart"
+            exit 1
+        fi
+        if [ -n "$ip" ]; then
+            say "ADB over WiFi enabled: adb connect $ip:$PORT"
+        else
+            say "ADB over WiFi enabled; WiFi has no IP address yet"
+        fi
+        ;;
+    off)
+        setprop service.adb.tcp.port 0 || { fail "could not clear service.adb.tcp.port"; exit 1; }
+        restart_adbd
+        if ! running; then
+            fail "adbd is not running after restart"
+            exit 1
+        fi
+        say "ADB over WiFi disabled; USB ADB is unaffected"
+        ;;
+    status)
+        if [ "$2" = --json ] || [ "$2" = json ]; then
+            status_json
+        else
+            show_status
+        fi
+        ;;
+    url)
+        ip=$(get_ip)
+        [ -n "$ip" ] || fail "WiFi has no IP address"
+        echo "adb connect $ip:$PORT"
+        ;;
+    log)
+        tail -n "${2:-80}" "$LOG" 2>/dev/null
+        ;;
+    *)
+        cat <<EOF
+Usage: foxadb <command>
+
+  on                  Enable adbd's TCP listener on port $PORT
+  off                 Disable TCP and restart adbd
+  status [--json]     Show state, address and connection command
+  url                 Print the adb connect command
+  log [lines]         Show /tmp/foxadb.log
+
+Wireless ADB uses the same authorization keys as USB ADB.  The recovery is
+HTTP/ADB only, so use it on a trusted network and turn it off when finished.
+EOF
+        ;;
+esac

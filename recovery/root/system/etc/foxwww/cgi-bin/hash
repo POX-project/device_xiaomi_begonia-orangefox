@@ -1,0 +1,25 @@
+#!/system/bin/sh
+# Return the SHA-256 of one file on demand.  The browser only calls this when
+# the user taps the SHA-256 button, so opening a backup folder stays cheap.
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_token
+
+requested=$(query_param path)
+[ -n "$requested" ] || json_error "400 Bad Request" "path is required"
+
+path=$(resolve_allowed "$requested") \
+    || json_error "404 Not Found" "path is outside /sdcard and /tmp or does not exist"
+
+[ -f "$path" ] || json_error "400 Bad Request" "not a regular file"
+
+sha=$(sha256sum "$path" 2>/dev/null | awk '{print $1; exit}')
+[ -n "$sha" ] || json_error "500 Internal Server Error" "sha256sum failed"
+
+size=$(file_size "$path")
+case "$size" in
+    ''|*[!0-9]*) size=0 ;;
+esac
+
+json_header
+printf '{"ok":true,"sha256":"%s","size":%s}\n' "$sha" "$size"

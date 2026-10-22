@@ -1,0 +1,86 @@
+#!/system/bin/sh
+# Raw upload endpoint.  The browser sends the File object as the request body
+# (not multipart), so large files are streamed through dd instead of being
+# buffered by the shell or the CGI helper.
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_post
+require_token
+
+dir=$(query_param dir)
+[ -n "$dir" ] || dir=$DISPLAY_SD
+dir=$(resolve_allowed "$dir") \
+    || json_error "404 Not Found" "upload folder is outside /sdcard and /tmp"
+[ -d "$dir" ] || json_error "400 Bad Request" "upload target is not a directory"
+
+name=$(query_param name)
+safe_name "$name" || json_error "400 Bad Request" "invalid file name"
+
+overwrite=$(query_param overwrite)
+dest="$dir/$name"
+if [ -d "$dest" ]; then
+    json_error "409 Conflict" "a folder with that name already exists"
+fi
+if { [ -e "$dest" ] || [ -L "$dest" ]; } && [ "$overwrite" != 1 ]; then
+    json_error "409 Conflict" "a file with that name already exists"
+fi
+
+len=$(content_length) || json_error "411 Length Required" "Content-Length is required"
+if [ "$len" -gt 8589934592 ]; then
+    json_error "413 Request Entity Too Large" "upload is limited to 8 GiB"
+fi
+
+# Leave a little headroom for recovery and the filesystem itself.
+avail=$(df -k "$dir" 2>/dev/null | awk 'NR == 2 { print $4; exit }')
+case "$avail" in
+    ''|*[!0-9]*) avail=0 ;;
+esac
+if [ "$avail" -gt 0 ]; then
+    need=$(( (len + 1023) / 1024 ))
+    if [ "$need" -gt "$((avail - 4096))" ]; then
+        json_error "507 Insufficient Storage" "not enough free space in the upload folder"
+    fi
+fi
+
+tmp="$dir/.foxupload.$$"
+rm -f "$tmp"
+umask 077
+
+if [ "$len" -gt 0 ]; then
+    blocks=$(( (len + 65535) / 65536 ))
+    # iflag=fullblock keeps a short pipe read from being counted as a whole
+    # block; the size check below still rejects a truncated request body.
+    dd bs=65536 count="$blocks" iflag=fullblock of="$tmp" 2>/dev/null
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        rm -f "$tmp"
+        json_error "500 Internal Server Error" "could not write uploaded file"
+    fi
+else
+    : > "$tmp" || json_error "500 Internal Server Error" "could not create uploaded file"
+fi
+
+got=$(file_size "$tmp")
+case "$got" in
+    ''|*[!0-9]*) got=0 ;;
+esac
+if [ "$got" -ne "$len" ]; then
+    rm -f "$tmp"
+    json_error "400 Bad Request" "upload ended early (expected $len bytes, got $got)"
+fi
+
+if [ "$overwrite" = 1 ]; then
+    mv -f "$tmp" "$dest" || { rm -f "$tmp"; json_error "500 Internal Server Error" "could not move uploaded file"; }
+else
+    mv -n "$tmp" "$dest" || { rm -f "$tmp"; json_error "500 Internal Server Error" "could not move uploaded file"; }
+    if [ -e "$tmp" ]; then
+        rm -f "$tmp"
+        json_error "409 Conflict" "a file with that name already exists"
+    fi
+fi
+
+chmod 0644 "$dest" 2>/dev/null
+
+json_header
+printf '{"ok":true,"message":"Uploaded","path":"%s","size":%s}\n' \
+    "$(json_escape "$(display_path "$dest")")" "$len"

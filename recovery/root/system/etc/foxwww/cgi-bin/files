@@ -1,0 +1,54 @@
+#!/system/bin/sh
+# List one directory under /sdcard or /tmp.  The UI keeps the friendly
+# /sdcard path even when the kernel resolves it to /data/media/0.
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_token
+
+requested=$(query_param path)
+[ -n "$requested" ] || requested=$DISPLAY_SD
+
+dir=$(resolve_allowed "$requested") \
+    || json_error "404 Not Found" "path is outside /sdcard and /tmp or does not exist"
+
+[ -d "$dir" ] || json_error "400 Bad Request" "not a directory"
+
+json_header
+printf '{"ok":true,"path":"%s","entries":[' "$(json_escape "$(display_path "$dir")")"
+
+first=1
+for p in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    [ -e "$p" ] || [ -L "$p" ] || continue
+
+    name=${p##*/}
+    if [ -L "$p" ]; then
+        type=link
+        size=$(file_size "$p")
+    elif [ -d "$p" ]; then
+        type=dir
+        size=0
+    elif [ -f "$p" ]; then
+        type=file
+        size=$(file_size "$p")
+    else
+        # Sockets, FIFOs and device nodes are not useful in the file browser.
+        continue
+    fi
+
+    case "$size" in
+        ''|*[!0-9]*) size=0 ;;
+    esac
+    mtime=$(file_mtime "$p")
+    case "$mtime" in
+        ''|*[!0-9]*) mtime=0 ;;
+    esac
+
+    [ "$first" -eq 1 ] || printf ','
+    first=0
+    printf '{"name":"%s","path":"%s","type":"%s","size":%s,"mtime":%s}' \
+        "$(json_escape "$name")" \
+        "$(json_escape "$(display_path "$p")")" \
+        "$type" "$size" "$mtime"
+done
+
+printf ']}\n'

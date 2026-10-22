@@ -90,7 +90,8 @@ tool settings. The CI builder lives at
 | --- | --- | --- |
 | `twrp-12.1` | physical (non-dynamic) | ext4 system/vendor, ext4+f2fs /data. Baseline TWRP tree. |
 | `unified` | **both** | see below. |
-| `wifi-browser` | **both** | `unified` + MediaTek WiFi and the FoxWeb dashboard. |
+| `wifi-browser` | **both** | `unified` + MediaTek WiFi, the FoxWeb dashboard and wireless ADB. |
+
 ### `unified`
 
 One recovery that boots on both a stock (non-dynamic) begonia and a
@@ -131,12 +132,13 @@ against the installed ROM's FBE version.
 
 ### `wifi-browser`
 
-`wifi-browser` is `unified` plus recovery WiFi and a browser dashboard.  It
-does not patch OrangeFox: everything is added from this device tree.
+`wifi-browser` is `unified` plus recovery WiFi, the FoxWeb dashboard, a
+file/backup browser and wireless ADB.  It does not patch OrangeFox: everything
+is added from this device tree.
 
 See [WIFI-BROWSER-TUTORIAL.md](WIFI-BROWSER-TUTORIAL.md) for a step-by-step
-usage guide, including the terminal commands, FoxWeb dashboard, USB fallback,
-security notes and troubleshooting.
+usage guide, including the terminal commands, FoxWeb dashboard, file manager,
+wireless ADB, USB fallback, security notes and troubleshooting.
 
 - The prebuilt kernel already has the MediaTek CONSYS/WMT/WLAN stack built in
   (`CONFIG_MTK_COMBO_WIFI=y`, `CONFIG_WLAN_DRV_BUILD_IN=y`,
@@ -151,7 +153,10 @@ security notes and troubleshooting.
   - A static BusyBox 1.36.1 in `/system/bin/busybox` (contains `httpd` with CGI).
   - `wget` (a BusyBox applet) and a real `curl` built from `external/curl`,
     plus the Mozilla CA bundle at `/system/etc/security/cacert.pem`.
-  - `foxwifi`, `foxweb` and the dashboard in `recovery/root/system/etc/foxwww`.
+  - `foxwifi`, `foxweb`, `foxadb` and the dashboard in
+    `recovery/root/system/etc/foxwww`.
+  - An offline copy of `qrcode-generator` (MIT, `qrcode.LICENSE.txt`) for the
+    dashboard's one-click and wireless-ADB QR codes.
 - The builder must comment out `CONFIG_CTRL_IFACE_HIDL=y` in
   `external/wpa_supplicant_8/wpa_supplicant/android.config` before compiling,
   so `wpa_cli` uses the unix control socket.  The stock `notify.c` includes
@@ -185,6 +190,9 @@ foxwifi scan               # list nearby networks
 foxwifi connect "MyNet" "password" WPA2
 foxwifi status             # state, IP and MAC
 foxweb status              # URL, one-click URL and access token
+foxadb on                  # enable adbd's TCP listener on port 5555
+foxadb status              # state, IP and adb connect command
+foxadb off                 # disable TCP; USB ADB stays available
 foxwifi save               # remember the network on /sdcard/Fox/wifi.conf
 foxwifi auto               # reconnect using the remembered network
 ```
@@ -193,7 +201,7 @@ foxwifi auto               # reconnect using the remembered network
 `foxweb status`; the `#token=...` fragment is imported by the dashboard so
 mutating actions work without typing the token.  The token is also accepted
 via the `X-Fox-Token` header and is required for connect, disconnect, WiFi
-on/off, forget and reboot.
+on/off, forget, reboot, file listing/download/hash and file mutations.
 
 Without WiFi, the same dashboard is reachable over USB:
 
@@ -203,10 +211,45 @@ adb forward tcp:8080 tcp:8080
 ```
 
 The dashboard can scan, join WPA/WPA2/WPA3 and open networks, toggle WiFi,
-disconnect, forget a saved network, show logs and reboot to recovery, system
-or bootloader.  Credentials are only written to `/sdcard/Fox/wifi.conf` when
-"Remember this network" is selected; that file is plaintext, so treat it
-accordingly.
+disconnect, forget a saved network, browse and manage files, enable wireless
+ADB, show logs and reboot to recovery, system or bootloader.  Credentials are
+only written to `/sdcard/Fox/wifi.conf` when "Remember this network" is
+selected; that file is plaintext, so treat it accordingly.
+
+#### Files and backups
+
+The **Files & backups** card browses two writable trees:
+
+- `/sdcard` (shown as **Internal storage**, even when the kernel resolves it
+  to `/data/media/0`).  The shortcuts jump to `/sdcard/TWRP/BACKUPS` and
+  `/sdcard/Fox`; if your recovery stores backups elsewhere, navigate there
+  from `/sdcard`.
+- `/tmp`, which is RAM-backed and disappears on reboot.
+
+Folders can be created, renamed or deleted; files can be downloaded, renamed
+or deleted; and an on-demand button calculates a file's SHA-256.  Deleting a
+folder removes everything inside it, with no trash or undo.  Uploads accept
+single files up to **8 GiB**, are checked against free space, and ask before
+overwriting an existing file.  Every file operation and download requires the
+access token; generated download links include it in the query string, so do
+not share those links.
+
+#### Wireless ADB and QR codes
+
+`foxadb on` sets `service.adb.tcp.port=5555` and restarts `adbd`; `foxadb off`
+removes the TCP listener and leaves USB ADB working.  With WiFi connected, the
+ADB card shows the endpoint and a QR code containing:
+
+```text
+adb connect <phone-ip>:5555
+```
+
+The dashboard card also renders a one-click FoxWeb QR code.  Both QR images
+are generated locally in the browser by the vendored `qrcode-generator`
+library.  The FoxWeb QR includes the access token in the URL fragment, so
+anyone who can scan it gets token access.  Wireless ADB uses the same
+authorization keys as USB ADB and is not encrypted; use it only on a trusted
+network and turn it off when finished.
 
 #### Downloading files
 
@@ -237,3 +280,10 @@ this build, so prefer `curl` for HTTPS.
 - The dashboard is HTTP-only and intended for a trusted local network.  It is
   not a replacement for the recovery UI; use the token and disconnect WiFi
   when you are done.
+- The file browser is deliberately confined to `/sdcard` and `/tmp`.
+  `/data`, `/system`, `/vendor` and the raw block devices are not exposed.
+  Uploads are limited to 8 GiB and fail if the request length is missing or
+  the filesystem does not have room.
+- Wireless ADB listens on TCP 5555 without transport encryption and trusts
+  the computer's existing ADB key.  Do not enable it on an untrusted network,
+  and run `foxadb off` when finished.

@@ -3,6 +3,7 @@
 
 require_post
 require_token
+read_body
 
 target=$(body_param target)
 case "$target" in

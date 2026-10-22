@@ -1,0 +1,79 @@
+#!/system/bin/sh
+# mkdir / rename / delete operations for the FoxWeb file browser.
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_post
+require_token
+read_body
+
+op=$(body_param op)
+case "$op" in
+    mkdir|rename|delete) ;;
+    *) json_error "400 Bad Request" "unknown file operation" ;;
+esac
+
+if [ "$op" = mkdir ]; then
+    requested=$(body_param path)
+    dir=$(resolve_allowed "$requested") \
+        || json_error "404 Not Found" "parent directory is outside /sdcard and /tmp"
+    [ -d "$dir" ] || json_error "400 Bad Request" "parent is not a directory"
+
+    name=$(body_param name)
+    safe_name "$name" || json_error "400 Bad Request" "invalid folder name"
+
+    dest="$dir/$name"
+    if [ -e "$dest" ] || [ -L "$dest" ]; then
+        json_error "409 Conflict" "a file or folder with that name already exists"
+    fi
+    mkdir "$dest" || json_error "500 Internal Server Error" "could not create folder"
+
+    json_header
+    printf '{"ok":true,"message":"Folder created","path":"%s"}\n' \
+        "$(json_escape "$(display_path "$dest")")"
+    exit 0
+fi
+
+requested=$(body_param path)
+path=$(resolve_allowed "$requested") \
+    || json_error "404 Not Found" "path is outside /sdcard and /tmp or does not exist"
+
+case "$path" in
+    "$ROOT_SD"|"$ROOT_TMP") json_error "400 Bad Request" "refusing to modify a storage root" ;;
+esac
+
+if [ "$op" = rename ]; then
+    # Renaming a symlink would rename its target after canonicalisation.
+    [ -L "$requested" ] && json_error "400 Bad Request" "refusing to rename a symlink"
+
+    name=$(body_param name)
+    safe_name "$name" || json_error "400 Bad Request" "invalid new name"
+
+    parent=${path%/*}
+    [ -n "$parent" ] || parent=/
+    dest="$parent/$name"
+    if [ -e "$dest" ] || [ -L "$dest" ]; then
+        json_error "409 Conflict" "a file or folder with that name already exists"
+    fi
+    [ -e "$path" ] || [ -L "$path" ] || json_error "404 Not Found" "source no longer exists"
+
+    mv "$path" "$dest" || json_error "500 Internal Server Error" "could not rename item"
+
+    json_header
+    printf '{"ok":true,"message":"Renamed","path":"%s"}\n' \
+        "$(json_escape "$(display_path "$dest")")"
+    exit 0
+fi
+
+# delete
+[ -L "$requested" ] && json_error "400 Bad Request" "refusing to delete a symlink"
+[ -e "$path" ] || json_error "404 Not Found" "item no longer exists"
+
+if [ -d "$path" ]; then
+    rm -rf "$path" || json_error "500 Internal Server Error" "could not delete folder"
+else
+    rm -f "$path" || json_error "500 Internal Server Error" "could not delete file"
+fi
+
+json_header
+printf '{"ok":true,"message":"Deleted","path":"%s"}\n' \
+    "$(json_escape "$(display_path "$path")")"

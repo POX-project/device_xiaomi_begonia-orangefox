@@ -72,6 +72,85 @@
     </form>
   </section>
 
+  <section class="card" id="adbCard">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Debug bridge</p>
+        <h2>ADB over WiFi</h2>
+      </div>
+      <span id="adbPill" class="pill off">
+        <span class="dot"></span>
+        <span id="adbState">Checking&hellip;</span>
+      </span>
+    </div>
+    <p id="adbDetail" class="muted small">Enable adbd's TCP listener on port 5555. USB ADB keeps working independently.</p>
+
+    <div class="adb-controls">
+      <div class="metrics">
+        <div><span>Endpoint</span><strong id="adbAddress">&mdash;</strong></div>
+        <div><span>Port</span><strong id="adbPort">5555</strong></div>
+        <div><span>Command</span><strong id="adbCommand">&mdash;</strong></div>
+      </div>
+      <div class="actions">
+        <button id="btnAdb" class="primary">Enable ADB over WiFi</button>
+        <button id="btnAdbRefresh" class="ghost">Refresh</button>
+      </div>
+    </div>
+
+    <div class="qr-grid">
+      <div class="qr-block">
+        <p class="eyebrow">FoxWeb dashboard</p>
+        <div id="webQr" class="qr-code">
+          <p class="muted small">Connect WiFi to generate a one-click QR code.</p>
+        </div>
+        <a id="webQrLink" class="url-link" href="#" target="_blank" rel="noopener">&mdash;</a>
+        <button id="btnCopyWeb" class="ghost small" type="button">Copy link</button>
+        <p id="webQrHint" class="muted small">Scan with a phone on the same network.</p>
+      </div>
+      <div class="qr-block">
+        <p class="eyebrow">ADB over WiFi</p>
+        <div id="adbQr" class="qr-code">
+          <p class="muted small">Enable ADB over WiFi to show the connect QR code.</p>
+        </div>
+        <p id="adbQrHint" class="muted small">The QR code contains the full <code>adb connect</code> command.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="filesCard">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Storage</p>
+        <h2>Files &amp; backups</h2>
+      </div>
+      <div class="file-actions">
+        <button id="btnMkdir" class="ghost small" type="button">New folder</button>
+        <button id="btnUpload" class="ghost small" type="button">Upload</button>
+        <input id="fileUpload" type="file" multiple hidden>
+        <button id="btnFilesRefresh" class="ghost small" type="button">Refresh</button>
+      </div>
+    </div>
+
+    <div id="fileRoots" class="quick-links">
+      <button data-path="/sdcard" class="active" type="button">Internal storage</button>
+      <button data-path="/sdcard/TWRP/BACKUPS" type="button">TWRP backups</button>
+      <button data-path="/sdcard/Fox" type="button">Fox folder</button>
+      <button data-path="/tmp" type="button">/tmp</button>
+    </div>
+
+    <div class="file-toolbar">
+      <button id="btnUp" class="ghost small" type="button">&larr; Up</button>
+      <nav id="breadcrumb" class="breadcrumb" aria-label="Current folder"></nav>
+    </div>
+
+    <p id="filesState" class="muted small">Enter the access token, then open a folder.</p>
+    <ul id="fileList" class="file-list hidden"></ul>
+    <p class="muted small">
+      Downloads and SHA-256 checks are streamed by recovery. Uploads are limited to 8&nbsp;GiB
+      and need the access token. Deleting a folder removes everything inside it.
+    </p>
+  </section>
+
   <section class="card">
     <div class="section-head">
       <div>
@@ -134,6 +213,7 @@
   </form>
 </dialog>
 
+<script src="qrcode.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

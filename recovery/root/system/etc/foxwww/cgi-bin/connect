@@ -3,6 +3,9 @@
 
 require_post
 require_token
+# Read once in the parent shell: body_param is normally called in command
+# substitutions, and a subshell cannot persist the cached BODY back.
+read_body
 
 ssid=$(body_param ssid)
 psk=$(body_param psk)

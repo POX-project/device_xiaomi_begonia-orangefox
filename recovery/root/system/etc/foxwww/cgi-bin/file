@@ -1,0 +1,34 @@
+#!/system/bin/sh
+# Stream one file as a download.  Browser <a> elements cannot set the token
+# header, so this endpoint also accepts ?token=... (the same token the UI
+# already keeps in local storage).
+. /system/etc/foxwww/cgi-bin/lib.sh
+
+require_token
+
+requested=$(query_param path)
+[ -n "$requested" ] || json_error "400 Bad Request" "path is required"
+
+path=$(resolve_allowed "$requested") \
+    || json_error "404 Not Found" "path is outside /sdcard and /tmp or does not exist"
+
+[ -f "$path" ] || json_error "400 Bad Request" "not a regular file"
+
+size=$(file_size "$path")
+case "$size" in
+    ''|*[!0-9]*) json_error "500 Internal Server Error" "could not read file size" ;;
+esac
+
+name=${requested##*/}
+[ -n "$name" ] || name=${path##*/}
+# Never let a filename inject or unbalance an HTTP header.
+name=$(printf '%s' "$name" | tr -d '\r\n' | sed 's/"/_/g; s/\\/_/g')
+
+printf 'Content-Type: application/octet-stream\r\n'
+printf 'Content-Length: %s\r\n' "$size"
+printf 'Content-Disposition: attachment; filename="%s"\r\n' "$name"
+printf 'Cache-Control: no-store\r\n'
+printf 'X-Content-Type-Options: nosniff\r\n'
+printf '\r\n'
+
+cat "$path"
