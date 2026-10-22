@@ -116,9 +116,10 @@ shipped (erofs or ext4; /data is ext4/f2fs).
   `BOARD_XIAOMI_DYNAMIC_PARTITIONS_*`).
 - `device.mk` adds `PRODUCT_USE_DYNAMIC_PARTITIONS := true`, `fastbootd`
   and the health HAL used by decryption.
-- FBEv2 decryption: `TW_USE_FSCRYPT_POLICY := 2`, the FBEv2 data fstab
-  flags (`inlinecrypt_optimized`, `fsverity`, `checkpoint=fs` on f2fs),
-  and no early `vold` start in `init.recovery.mt6785.rc`.
+- FBE v1 decryption: `TW_USE_FSCRYPT_POLICY := 1`, the stock v1 data fstab
+  (`aes-256-xts:aes-256-cts:v1`, no `keydirectory`), and no early `vold`
+  start in `init.recovery.mt6785.rc`. The data on these phones uses the
+  legacy v1 filename format, so forcing FBEv2 leaves `/data/misc` encrypted.
 - `system.prop` adds `ro.fastbootd.available=true`.
 - Product branding is `Randi` / `Nut 8 Pro`; `pb_begonia.mk` is kept for PBRP builds.
 

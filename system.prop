@@ -8,6 +8,5 @@ ro.mtk_tee_gp_support=1
 ro.mtk_microtrust_tee_support=1
 ro.product.device=begonia
 ro.crypto.volume.filenames_mode=aes-256-cts
-fbe.metadata.wrappedkey=true
 # fastbootd - required to flash/erase logical (dynamic) partitions
 ro.fastbootd.available=true

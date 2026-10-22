@@ -36,7 +36,7 @@ TW_RECOVERY_ADDITIONAL_RELINK_LIBRARY_FILES += \
 PRODUCT_PACKAGES += \
     libshim_beanpod
 
-# Health HAL (needed by the FBEv2/decryption bring-up)
+# Health HAL (needed by the decryption bring-up)
 PRODUCT_PACKAGES += \
     android.hardware.health@2.1-impl \
     android.hardware.health@2.1-service

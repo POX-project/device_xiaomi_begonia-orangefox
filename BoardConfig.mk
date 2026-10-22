@@ -136,8 +136,10 @@ PLATFORM_VERSION_LAST_STABLE := $(PLATFORM_VERSION)
 TW_INCLUDE_CRYPTO := true
 TW_INCLUDE_CRYPTO_FBE := true
 TW_INCLUDE_FBE_METADATA_DECRYPT := true
-# FBEv2 (metadata-encrypted userdata used by current MIUI/HyperOS/AOSP ROMs)
-TW_USE_FSCRYPT_POLICY := 2
+# FBE policy v1, matching the stock begonia fstab and the data on this device.
+# The old "Enable FBEv2" change here made libtar and the crypto helpers assume
+# v2 keys, which cannot read the v1 filenames under /data/misc.
+TW_USE_FSCRYPT_POLICY := 1
 
 # EROFS
 # The prebuilt recovery kernel has CONFIG_EROFS_FS=y / CONFIG_EROFS_FS_ZIP=y,
