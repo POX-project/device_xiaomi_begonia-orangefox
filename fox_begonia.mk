@@ -10,6 +10,14 @@ OF_NO_MIUI_PATCH_WARNING := 1
 OF_NO_TREBLE_COMPATIBILITY_CHECK := 1
 OF_UNBIND_SDCARD_F2FS := 1
 OF_PATCH_AVB20 := 1
+# Use our FBEv2/keydirectory-flags from recovery.fstab instead of letting
+# TWRP process a ROM fstab that may describe a different crypto layout.
+# This is the recommended fix when MTK decryption stops being detected.
+OF_FORCE_USE_RECOVERY_FSTAB := 1
+# The vendor tree provides keymaster 4.0 (beanpod).  This is only the
+# fallback: OrangeFox still uses the installed ROM's version when it can
+# detect one.
+OF_DEFAULT_KEYMASTER_VERSION := 4.0
 # Begonia ROMs often leave metadata unmounted until vold is ready.
 OF_FBE_METADATA_MOUNT_IGNORE := 1
 # TW_PREPARE_DATA_MEDIA_EARLY is already enabled in BoardConfig.mk.

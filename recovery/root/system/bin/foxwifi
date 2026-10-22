@@ -167,15 +167,72 @@ write_conf() {
     chmod 0600 "$CONF" 2>/dev/null
 }
 
+get_prop() {
+    if have getprop; then
+        getprop "$1" 2>/dev/null
+    fi
+}
+
+wmt_driver_ready() {
+    [ "$(get_prop vendor.connsys.driver.ready)" = yes ]
+}
+
+start_wlan_assistant() {
+    [ -x /system/bin/wlan_assistant ] || return 0
+    running wlan_assistant && return 0
+    log "starting wlan_assistant"
+    mkdir -p /data/vendor/macwifi /data/vendor/nvramwifi 2>/dev/null
+    ( /system/bin/wlan_assistant >>"$LOG" 2>&1 ) &
+    echo $! > "$TMP/wlan_assistant.pid"
+}
+
 start_wmt() {
     if [ ! -f "$TMP/wmt.ready" ]; then
         mount_nvdata
 
-        # wmt_loader only needs to talk to the WMT driver once per boot.
+        # A stale marker from a failed attempt must not hide the failure.
+        # wmt_loader is safe to retry, but only once the WMT device node or
+        # the driver-ready property exists.  Do not cache an attempt that
+        # failed to bring the coprocessor up.
+        if ! wmt_driver_ready; then
+            rm -f "$TMP/wmt.loaded"
+        fi
+
         if [ ! -f "$TMP/wmt.loaded" ] && [ -x /system/bin/wmt_loader ]; then
-            log "running wmt_loader"
-            /system/bin/wmt_loader >>"$LOG" 2>&1
-            touch "$TMP/wmt.loaded"
+            attempt=1
+            loader_log=$TMP/wmt_loader.log
+            while [ "$attempt" -le 3 ]; do
+                log "running wmt_loader (attempt $attempt/3)"
+                : > "$loader_log"
+                /system/bin/wmt_loader >>"$loader_log" 2>&1
+                loader_rc=$?
+                cat "$loader_log" >>"$LOG" 2>/dev/null
+
+                if [ "$loader_rc" -eq 0 ] && wmt_driver_ready; then
+                    touch "$TMP/wmt.loaded"
+                    break
+                fi
+                # Some loaders return 0 even after logging the node timeout;
+                # accept only an explicit success or the driver property.
+                if grep -q "driver.ready.*yes.*succeed" "$loader_log" 2>/dev/null; then
+                    touch "$TMP/wmt.loaded"
+                    break
+                fi
+                if [ "$loader_rc" -ne 0 ]; then
+                    log "wmt_loader attempt $attempt failed (rc=$loader_rc)"
+                else
+                    log "wmt_loader attempt $attempt did not set vendor.connsys.driver.ready"
+                fi
+                attempt=$((attempt + 1))
+                [ "$attempt" -le 3 ] && sleep 2
+            done
+        fi
+
+        if [ ! -f "$TMP/wmt.loaded" ] && ! wmt_driver_ready; then
+            fail "WMT loader failed; last output:"
+            tail -n 12 "$TMP/wmt_loader.log" 2>/dev/null | sed 's/^/  /' >&2
+            rm -f "$TMP/wmt.ready"
+            return 1
         fi
 
         # The WLAN driver can create wlan0 during probe, before the firmware
@@ -187,6 +244,12 @@ start_wmt() {
             echo $! > "$TMP/wmt_launcher.pid"
         fi
 
+        # Stock MediaTek init starts wlan_assistant as soon as
+        # vendor.connsys.driver.ready is set, before it expects wlan0.  On
+        # some kernels the interface only appears after NVRAM/MAC setup, so
+        # waiting for wlan0 first would deadlock the bring-up.
+        start_wlan_assistant
+
         i=0
         while [ "$i" -lt 20 ]; do
             [ -e "/sys/class/net/$IFACE" ] && break
@@ -195,23 +258,29 @@ start_wmt() {
         done
 
         if [ ! -e "/sys/class/net/$IFACE" ]; then
-            fail "$IFACE did not appear (WMT firmware load failed?)"
-            return 1
+            # wlan_assistant may have raced wmt_launcher's firmware load.
+            # Restart it once and give the driver a short extra window.
+            start_wlan_assistant
+            i=0
+            while [ "$i" -lt 5 ]; do
+                [ -e "/sys/class/net/$IFACE" ] && break
+                sleep 1
+                i=$((i + 1))
+            done
         fi
 
-        if [ -x /system/bin/wlan_assistant ] && ! running wlan_assistant; then
-            log "starting wlan_assistant"
-            mkdir -p /data/vendor/macwifi /data/vendor/nvramwifi 2>/dev/null
-            ( /system/bin/wlan_assistant >>"$LOG" 2>&1 ) &
-            echo $! > "$TMP/wlan_assistant.pid"
-            # Let it program the MAC/NVRAM before wpa_supplicant starts.
-            sleep 2
+        if [ ! -e "/sys/class/net/$IFACE" ]; then
+            # A failed bring-up must be retried, not cached.
+            rm -f "$TMP/wmt.ready" "$TMP/wmt.loaded"
+            fail "$IFACE did not appear (WMT firmware load failed?)"
+            tail -n 20 "$LOG" 2>/dev/null | sed 's/^/  /' >&2
+            return 1
         fi
     fi
 
     if [ ! -e "/sys/class/net/$IFACE" ]; then
         # The driver may have been reset; retry the full bring-up next time.
-        rm -f "$TMP/wmt.ready"
+        rm -f "$TMP/wmt.ready" "$TMP/wmt.loaded"
         fail "$IFACE is missing"
         return 1
     fi
@@ -513,6 +582,48 @@ cmd_status() {
     fi
 }
 
+cmd_diag() {
+    echo "== WiFi state =="
+    cmd_status
+    echo
+    echo "== WMT properties =="
+    for p in vendor.connsys.driver.ready persist.vendor.connsys.chipid \
+             vendor.connsys.adie.chipid ro.vendor.wlan.gen; do
+        printf '%-38s %s\n' "$p" "$(get_prop "$p")"
+    done
+    echo
+    echo "== WMT/WiFi device nodes =="
+    ls -l /dev/wmtdetect /dev/stpwmt /dev/wmtWifi \
+          /dev/fw_log_wmt /dev/fw_log_wifi 2>&1
+    echo
+    echo "== firmware =="
+    ls -l "$FW_DIR" 2>&1 | sed -n '1,40p'
+    echo
+    echo "== processes =="
+    (ps -A 2>/dev/null || ps 2>/dev/null) | \
+        grep -E 'wmt_|wlan_assistant|wpa_supplicant|dhcp' || true
+    echo
+    echo "== kernel WMT/WiFi lines =="
+    dmesg 2>/dev/null | grep -iE 'wmt|connsys|wlan|wifi|stp|teei|keymaster|gatekeeper' | tail -n 50
+    echo
+    echo "== crypto state =="
+    for p in ro.crypto.state ro.crypto.type ro.crypto.volume.options \
+             ro.crypto.volume.metadata.method ro.crypto.volume.filenames_mode \
+             ro.hardware.kmsetkey ro.hardware.gatekeeper \
+             init.svc.hwservicemanager init.svc.servicemanager \
+             init.svc.teei_daemon init.svc.keymaster-4-0-beanpod \
+             init.svc.gatekeeper-1-0; do
+        printf '%-38s %s\n' "$p" "$(get_prop "$p")"
+    done
+    echo
+    echo "== /data and /metadata =="
+    mount 2>/dev/null | grep -E ' /data | /metadata ' || echo "neither partition is mounted"
+    ls -ld /metadata/vold/metadata_encryption 2>&1
+    ls -l /dev/block/by-name/userdata /dev/block/by-name/metadata 2>&1
+    echo
+    echo "Use 'foxwifi log 120' for the full WiFi log."
+}
+
 cmd_save() {
     [ -f "$LAST" ] || { fail "no network has been connected in this session"; return 1; }
     ssid=""; psk=""; enc=""
@@ -653,7 +764,8 @@ Usage: foxwifi <command> [args]
   disconnect
   save | forget | auto      Remember/forget/auto-connect a network
   daemon                    Init service (keeps the link alive)
-  log                       Show the log
+  diag                      Show WMT, WiFi and crypto diagnostics
+  log [N]                   Show the last N log lines (default 80)
 EOF
 }
 
@@ -730,6 +842,9 @@ case "$1" in
         ;;
     log)
         tail -n "${2:-80}" "$LOG" 2>/dev/null
+        ;;
+    diag)
+        cmd_diag
         ;;
     init)
         cmd_on

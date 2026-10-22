@@ -14,7 +14,14 @@ on init
 on property:ro.crypto.state=encrypted && property:ro.crypto.type=file
     install_keyring
 
-on post-fs
+on fs
+    # Recovery init does not always import /system/etc/init before the
+    # crypto HAL property triggers fire.  Start the HIDL/AIDL service
+    # managers explicitly (as the known-working begonia TWRP trees do), so
+    # hwservicemanager.ready can start teei/keymaster/gatekeeper before the
+    # first /data decryption attempt.
+    start hwservicemanager
+    start servicemanager
 
 service gatekeeper-1-0 /vendor/bin/hw/android.hardware.gatekeeper@1.0-service
     interface android.hardware.gatekeeper@1.0::IGatekeeper default
