@@ -1,0 +1,7 @@
+#!/system/bin/sh
+# ping - BusyBox applet wrapper for OrangeFox recovery.
+#
+# BusyBox in this ramdisk is built with the ping applet, but it is only
+# reachable as "busybox ping".  Expose it under the usual name so scripts and
+# the recovery terminal can just run "ping".
+exec /system/bin/busybox ping "$@"
