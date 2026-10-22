@@ -72,3 +72,24 @@ TW_RECOVERY_ADDITIONAL_RELINK_LIBRARY_FILES += \
     $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/libkeystore-engine-wifi-hidl.so \
     $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/libnl.so \
     $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/libssl.so
+
+# curl for downloading files from recovery.
+#
+# external/curl is removed by the minimal TWRP manifest, so the builder clones
+# it before lunch.  Keep this conditional: a tree built without that source
+# (or the plain unified branch) still builds, just without curl.
+#
+# wget is already a BusyBox applet; recovery/root/system/bin/wget exposes it.
+ifneq ($(wildcard external/curl/Android.bp),)
+TARGET_RECOVERY_DEVICE_MODULES += \
+    curl
+
+TW_RECOVERY_ADDITIONAL_RELINK_BINARY_FILES += \
+    $(TARGET_OUT_EXECUTABLES)/curl
+
+# curl is linked against BoringSSL and zlib.  libssl.so is already relinked
+# above for wpa_supplicant; pull in its runtime companions explicitly.
+TW_RECOVERY_ADDITIONAL_RELINK_LIBRARY_FILES += \
+    $(TARGET_OUT_SHARED_LIBRARIES)/libcrypto.so \
+    $(TARGET_OUT_SHARED_LIBRARIES)/libz.so
+endif

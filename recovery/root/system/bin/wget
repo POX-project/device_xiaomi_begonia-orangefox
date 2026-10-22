@@ -1,0 +1,7 @@
+#!/system/bin/sh
+# wget - BusyBox applet wrapper for OrangeFox recovery.
+#
+# BusyBox in this ramdisk is built with the wget applet (and ssl_client for
+# HTTPS), but it is only reachable as "busybox wget".  Expose it under the
+# usual name so scripts and the recovery terminal can just run "wget".
+exec /system/bin/busybox wget "$@"

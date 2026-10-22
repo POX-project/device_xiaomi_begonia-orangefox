@@ -1,0 +1,3 @@
+#!/system/bin/sh
+# ssl_client - BusyBox applet wrapper used by BusyBox wget for HTTPS.
+exec /system/bin/busybox ssl_client "$@"

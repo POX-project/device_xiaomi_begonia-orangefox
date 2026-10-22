@@ -8,6 +8,8 @@ on init
     # Create a more standard /dev/block layout for our scripts
     symlink /dev/block/platform/bootdevice /dev/block/bootdevice
     export LD_LIBRARY_PATH /system/lib64:/vendor/lib64:/vendor/lib64/hw
+    # Let the bundled curl validate HTTPS against the recovery CA bundle.
+    export CURL_CA_BUNDLE /system/etc/security/cacert.pem
 
 on property:ro.crypto.state=encrypted && property:ro.crypto.type=file
     install_keyring

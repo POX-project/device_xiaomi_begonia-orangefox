@@ -134,6 +134,10 @@ against the installed ROM's FBE version.
 `wifi-browser` is `unified` plus recovery WiFi and a browser dashboard.  It
 does not patch OrangeFox: everything is added from this device tree.
 
+See [WIFI-BROWSER-TUTORIAL.md](WIFI-BROWSER-TUTORIAL.md) for a step-by-step
+usage guide, including the terminal commands, FoxWeb dashboard, USB fallback,
+security notes and troubleshooting.
+
 - The prebuilt kernel already has the MediaTek CONSYS/WMT/WLAN stack built in
   (`CONFIG_MTK_COMBO_WIFI=y`, `CONFIG_WLAN_DRV_BUILD_IN=y`,
   `CONFIG_MTK_COMBO_CHIP_CONSYS_6785=y`, `CONFIG_CFG80211=y`).  The tree adds
@@ -145,6 +149,8 @@ does not patch OrangeFox: everything is added from this device tree.
   - TWRP's static `dhcpcd`, with a BusyBox `udhcpc` fallback for encrypted
     devices where `/data/misc/dhcp` is unavailable.
   - A static BusyBox 1.36.1 in `/system/bin/busybox` (contains `httpd` with CGI).
+  - `wget` (a BusyBox applet) and a real `curl` built from `external/curl`,
+    plus the Mozilla CA bundle at `/system/etc/security/cacert.pem`.
   - `foxwifi`, `foxweb` and the dashboard in `recovery/root/system/etc/foxwww`.
 - The builder must comment out `CONFIG_CTRL_IFACE_HIDL=y` in
   `external/wpa_supplicant_8/wpa_supplicant/android.config` before compiling,
@@ -154,6 +160,20 @@ does not patch OrangeFox: everything is added from this device tree.
   recovery-only no-op `hidl.h` into
   `external/wpa_supplicant_8/wpa_supplicant/`.  The `wifi-browser` CI branch
   does both automatically.
+- `external/curl` is removed by the minimal manifest as well.  The builder
+  clones it at `android-12.1.0_r4`, and the recovery build relinks the `curl`
+  binary into `/system/bin/curl`.  `wget` is exposed by
+  `recovery/root/system/bin/wget`, which calls the BusyBox applet.
+  `CURL_CA_BUNDLE` is exported by `init.recovery.mt6785.rc`, so curl validates
+  HTTPS against `/system/etc/security/cacert.pem`; BusyBox wget uses
+  `ssl_client`, which does not validate certificates in this build.
+
+  For a local build, clone the removed project before lunch:
+
+  ```sh
+  git clone --depth=1 -b android-12.1.0_r4 \
+      https://android.googlesource.com/platform/external/curl external/curl
+  ```
 
 #### Using it
 
@@ -187,6 +207,23 @@ disconnect, forget a saved network, show logs and reboot to recovery, system
 or bootloader.  Credentials are only written to `/sdcard/Fox/wifi.conf` when
 "Remember this network" is selected; that file is plaintext, so treat it
 accordingly.
+
+#### Downloading files
+
+The image includes BusyBox `wget` and a real `curl`:
+
+```sh
+wget https://example.com/file.zip
+curl -LO https://example.com/file.zip
+curl -fsSL https://example.com/install.sh -o /tmp/install.sh
+```
+
+Downloads are written to the current directory; use `/tmp` or `/sdcard`
+explicitly if you need a known location.  `curl` uses the bundled CA bundle
+via `CURL_CA_BUNDLE`.  If you run it from an environment where that variable
+is missing, pass `--cacert /system/etc/security/cacert.pem` yourself.
+BusyBox `wget` uses `ssl_client` and does not validate HTTPS certificates in
+this build, so prefer `curl` for HTTPS.
 
 #### Limits
 
