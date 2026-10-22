@@ -1,6 +1,6 @@
 # Crypto
-# Match the stock begonia vendor.prop: the ROM uses FBE policy v1 and has no
-# metadata-encrypted userdata.  Do not add dm-default-key or ::v2 here; those
-# properties came from the incorrect "Enable FBEv2" change and make vold
-# advertise a crypto layout this device does not use.
+# These are only defaults for adoptable/volume encryption.  Internal /data is
+# decrypted from the installed ROM's own fstab plus the actual policy on
+# /data/misc, so keep the stock filename mode here instead of forcing either
+# FBE generation globally.
 ro.crypto.volume.filenames_mode=aes-256-cts

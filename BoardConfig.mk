@@ -136,9 +136,10 @@ PLATFORM_VERSION_LAST_STABLE := $(PLATFORM_VERSION)
 TW_INCLUDE_CRYPTO := true
 TW_INCLUDE_CRYPTO_FBE := true
 TW_INCLUDE_FBE_METADATA_DECRYPT := true
-# FBE policy v1, matching the stock begonia fstab and the data on this device.
-# The old "Enable FBEv2" change here made libtar and the crypto helpers assume
-# v2 keys, which cannot read the v1 filenames under /data/misc.
+# libtar's backup-side fscrypt policy.  This does not control decryption:
+# TWRP reads the installed ROM's vendor fstab and vold detects the actual
+# v1/v2 policy on /data/misc at runtime.  Keep 1 for this device's legacy
+# data so encrypted tar backups remain compatible with it.
 TW_USE_FSCRYPT_POLICY := 1
 
 # EROFS

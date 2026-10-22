@@ -40,15 +40,17 @@ odm                                             /odm                  ext4     r
 
 # --- common to both layouts ---
 /dev/block/platform/bootdevice/by-name/misc      /misc                 emmc     defaults                                                        defaults
-# Match the encryption policy this device actually uses.  The stock begonia
-# fstab (device_redmi_begonia/init/etc/fstab.mt6785) and the data on this
-# phone are FBE policy v1: logcat shows /data/misc dirents in the legacy
-# "base64(iv),base64(ciphertext)" format.  Installing the system DE key as
-# v2 leaves every name under /data/misc encrypted, so fscrypt_init_user0
-# cannot find /data/misc/vold/user_keys.  Do not add metadata_encryption,
-# wrappedkey_v0 or keydirectory here: this ROM has no metadata key and its
-# keymaster rejects the wrapped-key install.  This is the original
-# PBRP/TWRP v1 line, before the incorrect "Enable FBEv2" change.
-/dev/block/platform/bootdevice/by-name/userdata   /data       ext4     noatime,nosuid,nodev,noauto_da_alloc,errors=panic,inlinecrypt wait,check,formattable,quota,latemount,resize,reservedsize=128m,fileencryption=aes-256-xts:aes-256-cts:v1
-/dev/block/platform/bootdevice/by-name/userdata   /data       f2fs     noatime,nosuid,nodev,discard,flush_merge,reserve_root=134217,resgid=1065,alloc_mode=reuse,fsync_mode=nobarrier,inlinecrypt wait,check,formattable,quota,latemount,reservedsize=128m,fileencryption=aes-256-xts:aes-256-cts:v1
+# FALLBACK ONLY.  TWRP normally parses the installed ROM's vendor fstab
+# (/vendor/etc/fstab.<hardware>) and uses its /data and /metadata entries,
+# so each ROM's exact crypto layout wins automatically: FBE v1 for the
+# stock/legacy begonia ROMs, FBE v2 for modern ROMs, plus metadata and
+# wrapped-key flags where the ROM uses them.
+#
+# These lines are used only when the vendor fstab cannot be found.  Default
+# to the modern FBE v2 layout, including metadata, because that is what new
+# Android releases use.  vold is patched to inspect the real policy on
+# /data/misc and fall back to v1, removing wrapped-key/IV_INO_LBLK_32, when
+# the installed data is legacy v1.
+/dev/block/platform/bootdevice/by-name/userdata   /data       ext4     noatime,nosuid,nodev,noauto_da_alloc,errors=panic,inlinecrypt wait,check,formattable,quota,latemount,resize,reservedsize=128m,fileencryption=aes-256-xts:aes-256-cts:v2+wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption,metadata_encryption=aes-256-xts:wrappedkey_v0
+/dev/block/platform/bootdevice/by-name/userdata   /data       f2fs     noatime,nosuid,nodev,discard,flush_merge,reserve_root=134217,resgid=1065,alloc_mode=reuse,fsync_mode=nobarrier,inlinecrypt wait,check,formattable,quota,latemount,reservedsize=128m,fileencryption=aes-256-xts:aes-256-cts:v2+wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption,metadata_encryption=aes-256-xts:wrappedkey_v0
 /dev/block/platform/bootdevice/by-name/metadata  /metadata             ext4     noatime,nosuid,nodev,discard                                    wait,check,formattable,first_stage_mount

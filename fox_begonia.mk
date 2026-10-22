@@ -10,10 +10,15 @@ OF_NO_MIUI_PATCH_WARNING := 1
 OF_NO_TREBLE_COMPATIBILITY_CHECK := 1
 OF_UNBIND_SDCARD_F2FS := 1
 OF_PATCH_AVB20 := 1
-# Use our v1 recovery.fstab flags instead of letting TWRP process a ROM fstab
-# that may describe a different crypto layout.
-# This is the recommended fix when MTK decryption stops being detected.
-OF_FORCE_USE_RECOVERY_FSTAB := 1
+# Let TWRP read the installed ROM's vendor fstab for /data and /metadata.
+# That fstab describes the crypto layout that actually encrypted this ROM's
+# data (FBE v1, FBE v2, metadata encryption, wrapped keys, ...), while the
+# recovery.fstab lines are only a fallback when no vendor fstab is found.
+#
+# Do not set OF_FORCE_USE_RECOVERY_FSTAB / TW_SKIP_ADDITIONAL_FSTAB here:
+# doing so forces one hard-coded policy version and breaks the other ROMs.
+# The recovery also patches vold to prefer /etc/additional.fstab and to
+# sanity-check the actual policy on /data/misc.
 # The vendor tree provides keymaster 4.0 (beanpod).  This is only the
 # fallback: OrangeFox still uses the installed ROM's version when it can
 # detect one.
