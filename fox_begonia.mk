@@ -18,6 +18,9 @@ OF_FORCE_USE_RECOVERY_FSTAB := 1
 # fallback: OrangeFox still uses the installed ROM's version when it can
 # detect one.
 OF_DEFAULT_KEYMASTER_VERSION := 4.0
+# This recovery only ships the keymaster 4.0 service, so do not let a
+# ROM-provided 4.1/3.0 prop select a service that does not exist here.
+TW_FORCE_KEYMASTER_VER := true
 # Begonia ROMs often leave metadata unmounted until vold is ready.
 OF_FBE_METADATA_MOUNT_IGNORE := 1
 # TW_PREPARE_DATA_MEDIA_EARLY is already enabled in BoardConfig.mk.

@@ -186,6 +186,11 @@ start_wlan_assistant() {
     echo $! > "$TMP/wlan_assistant.pid"
 }
 
+dump_wmt_logcat() {
+    have logcat || return 0
+    logcat -d -v brief -s wmt_loader wmt_launcher wlan_assistant 2>/dev/null | tail -n 40
+}
+
 start_wmt() {
     if [ ! -f "$TMP/wmt.ready" ]; then
         mount_nvdata
@@ -230,7 +235,11 @@ start_wmt() {
 
         if [ ! -f "$TMP/wmt.loaded" ] && ! wmt_driver_ready; then
             fail "WMT loader failed; last output:"
-            tail -n 12 "$TMP/wmt_loader.log" 2>/dev/null | sed 's/^/  /' >&2
+            wmt_tail=$(dump_wmt_logcat)
+            [ -n "$wmt_tail" ] && printf '%s\n' "$wmt_tail" >>"$LOG"
+            { tail -n 12 "$TMP/wmt_loader.log" 2>/dev/null
+              [ -n "$wmt_tail" ] && printf '%s\n' "$wmt_tail"
+            } | tail -n 20 | sed 's/^/  /' >&2
             rm -f "$TMP/wmt.ready"
             return 1
         fi
@@ -272,6 +281,8 @@ start_wmt() {
         if [ ! -e "/sys/class/net/$IFACE" ]; then
             # A failed bring-up must be retried, not cached.
             rm -f "$TMP/wmt.ready" "$TMP/wmt.loaded"
+            wmt_tail=$(dump_wmt_logcat)
+            [ -n "$wmt_tail" ] && printf '%s\n' "$wmt_tail" >>"$LOG"
             fail "$IFACE did not appear (WMT firmware load failed?)"
             tail -n 20 "$LOG" 2>/dev/null | sed 's/^/  /' >&2
             return 1
@@ -605,6 +616,9 @@ cmd_diag() {
     echo
     echo "== kernel WMT/WiFi lines =="
     dmesg 2>/dev/null | grep -iE 'wmt|connsys|wlan|wifi|stp|teei|keymaster|gatekeeper' | tail -n 50
+    echo
+    echo "== WMT/WiFi logcat =="
+    dump_wmt_logcat
     echo
     echo "== crypto state =="
     for p in ro.crypto.state ro.crypto.type ro.crypto.volume.options \
