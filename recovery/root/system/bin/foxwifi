@@ -19,6 +19,7 @@
 #   foxwifi disconnect
 #   foxwifi status                 human-readable status
 #   foxwifi status-json            status as a JSON object
+#   foxwifi ping [host ...]        ping gateway/DNS/internet (or the given hosts)
 #   foxwifi save                   remember the last network (plaintext)
 #   foxwifi forget                 delete the remembered network
 #   foxwifi auto                   connect using the remembered network
@@ -528,10 +529,22 @@ start_supp() {
     return 1
 }
 
+set_hostname() {
+    # "bugonia" is this board as far as the network is concerned; it is also
+    # sent as the DHCP hostname so the router's lease table is readable.
+    setprop net.hostname bugonia 2>/dev/null
+    if have hostname; then
+        hostname bugonia 2>/dev/null || true
+    elif [ -w /proc/sys/kernel/hostname ]; then
+        echo bugonia > /proc/sys/kernel/hostname 2>/dev/null
+    fi
+}
+
 wifi_up() {
     start_wmt || return 1
     link_up || return 1
     start_supp || return 1
+    set_hostname
     # Supplicant owns the interface now; WMT bring-up can be skipped until
     # the driver or interface disappears.
     touch "$TMP/wmt.ready"
@@ -562,12 +575,23 @@ wifi_down() {
 }
 
 set_dhcp_dns() {
-    if [ ! -s /etc/resolv.conf ]; then
-        {
-            echo "nameserver 1.1.1.1"
-            echo "nameserver 8.8.8.8"
-        } > /etc/resolv.conf 2>/dev/null
-    fi
+    # Recovery has no netd, so bionic's resolver only looks at the
+    # net.dns1..4 system properties.  Writing /etc/resolv.conf alone is not
+    # enough for anything that uses getaddrinfo (repo, curl, the OrangeFox
+    # downloaders): they fail with "unable to resolve host".
+    servers=$(awk '/^[[:space:]]*nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null)
+    [ -n "$servers" ] || servers="1.1.1.1 8.8.8.8"
+
+    : > /etc/resolv.conf 2>/dev/null
+    i=0
+    for d in $servers; do
+        i=$((i + 1))
+        [ "$i" -le 4 ] || break
+        echo "nameserver $d" >> /etc/resolv.conf 2>/dev/null
+        setprop "net.dns$i" "$d" 2>/dev/null
+        setprop "net.dns$i.$IFACE" "$d" 2>/dev/null
+    done
+    log "DNS: $(printf '%s ' $servers)"
 }
 
 try_udhcpc() {
@@ -778,6 +802,35 @@ cmd_status() {
     if have dhcpcd; then
         echo "DHCP      : $(running dhcpcd && echo running || echo stopped)"
     fi
+}
+
+cmd_ping() {
+    pingbin=/system/bin/ping
+    if [ ! -x "$pingbin" ]; then
+        [ -n "$BB" ] || { fail "ping is not available"; return 1; }
+        pingbin="$BB ping"
+    fi
+
+    if [ "$#" -gt 0 ]; then
+        targets="$*"
+    else
+        gw=$("$BB" ip route 2>/dev/null | awk '/^default/ {print $3; exit}')
+        [ -n "$gw" ] || gw=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}')
+        targets="$gw 1.1.1.1 google.com"
+    fi
+
+    rc=0
+    for h in $targets; do
+        [ -n "$h" ] || continue
+        printf '%-24s ' "$h"
+        if $pingbin -c 2 -W 2 "$h" >/dev/null 2>&1; then
+            echo "ok"
+        else
+            echo "FAILED"
+            rc=1
+        fi
+    done
+    return $rc
 }
 
 cmd_diag() {
@@ -999,6 +1052,11 @@ case "$1" in
         ;;
     status)
         if [ "$2" = "--json" ] || [ "$2" = "json" ]; then cmd_status_json; else cmd_status; fi
+        ;;
+    ping)
+        shift
+        cmd_ping "$@"
+        exit $?
         ;;
     scan)
         take_lock || exit 1

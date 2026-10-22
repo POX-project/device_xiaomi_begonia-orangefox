@@ -28,9 +28,19 @@ case "$reason" in
             done
         fi
         : > /etc/resolv.conf 2>/dev/null
+        i=0
         for d in $new_domain_name_servers; do
             echo "nameserver $d" >> /etc/resolv.conf 2>/dev/null
+            i=$((i + 1))
+            [ "$i" -le 4 ] || break
+            # Recovery has no netd; bionic resolves through these props.
+            setprop "net.dns$i" "$d" 2>/dev/null
+            setprop "net.dns$i.$interface" "$d" 2>/dev/null
         done
+        if [ "$i" -eq 0 ]; then
+            setprop net.dns1 1.1.1.1 2>/dev/null
+            setprop net.dns2 8.8.8.8 2>/dev/null
+        fi
         ;;
     RELEASE|NAK|EXPIRE|FAIL|STOP)
         ifconfig "$interface" 0.0.0.0 2>/dev/null
