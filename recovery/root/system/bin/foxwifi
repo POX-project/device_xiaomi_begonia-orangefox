@@ -44,7 +44,17 @@ LAST=$TMP/last
 LOCK=$TMP/lock
 NVDATA=/dev/block/platform/bootdevice/by-name/nvdata
 NVDATA_MNT=/mnt/vendor/nvdata
-FW_DIR=/system/etc/firmware
+# Firmware packaged in the recovery ramdisk.
+FW_SRC=/system/etc/firmware
+# Runtime firmware directory handed to wmt_launcher.  It must be
+# /vendor/firmware/: the launcher copies the first 16 bytes of the -p
+# argument back into its internal default buffer and only writes the
+# terminator at byte 17.  With "-p /system/etc/firmware/" byte 16 is left
+# as 'w' from the old string, so the launcher actually tries to opendir
+# "/vendor/firmwarew" and fails with "patch path cannot be opened".
+# Using the stock 17-byte "/vendor/firmware/" keeps the rebuilt path valid.
+FW_DIR=/vendor/firmware
+FW_RUN=$TMP/firmware
 
 mkdir -p "$TMP" "$CTRL" 2>/dev/null
 
@@ -156,6 +166,63 @@ mount_nvdata() {
     fi
 }
 
+prepare_firmware() {
+    # The launcher's ROM-patch path is hard-coded to /vendor/firmware.  On a
+    # recovery boot /vendor is usually not mounted, so this is the ramdisk
+    # symlink to /system/etc/firmware; on a later manual "foxwifi on" /vendor
+    # may be mounted and hide that symlink.  Bind our known-good copy over
+    # /vendor/firmware so the hard-coded path always sees the firmware that
+    # matches this kernel, and add the WMT.cfg alias some launcher builds
+    # look for.
+    if [ -f "$TMP/firmware.ready" ] && [ -s "$FW_DIR/WMT_SOC.cfg" ]; then
+        return 0
+    fi
+
+    rm -rf "$FW_RUN" 2>/dev/null
+    mkdir -p "$FW_RUN" 2>/dev/null || return 1
+
+    if [ -d "$FW_SRC" ]; then
+        cp -f "$FW_SRC"/* "$FW_RUN"/ 2>/dev/null
+    fi
+    if [ ! -s "$FW_RUN/WMT_SOC.cfg" ]; then
+        fail "recovery firmware is missing from $FW_SRC"
+        return 1
+    fi
+    [ -e "$FW_RUN/WMT.cfg" ] || \
+        cp -f "$FW_RUN/WMT_SOC.cfg" "$FW_RUN/WMT.cfg" 2>/dev/null
+    chmod 0644 "$FW_RUN"/* 2>/dev/null
+
+    mkdir -p "$FW_DIR" 2>/dev/null
+    if mount -o bind "$FW_RUN" "$FW_DIR" >>"$LOG" 2>&1; then
+        log "bind-mounted recovery firmware on $FW_DIR"
+        touch "$TMP/firmware.ready"
+        return 0
+    fi
+    if mount --bind "$FW_RUN" "$FW_DIR" >>"$LOG" 2>&1; then
+        log "bind-mounted recovery firmware on $FW_DIR (long option)"
+        touch "$TMP/firmware.ready"
+        return 0
+    fi
+    if [ -L "$FW_DIR" ]; then
+        # Some mount implementations refuse to follow the ramdisk symlink.
+        # Bind onto its resolved target instead; /vendor/firmware still
+        # resolves to the same directory.
+        fw_target=$(readlink -f "$FW_DIR" 2>/dev/null)
+        if [ -n "$fw_target" ] && \
+           mount -o bind "$FW_RUN" "$fw_target" >>"$LOG" 2>&1; then
+            log "bind-mounted recovery firmware on $fw_target"
+            touch "$TMP/firmware.ready"
+            return 0
+        fi
+    fi
+    log "could not bind-mount $FW_RUN on $FW_DIR; using the existing directory"
+    if [ ! -s "$FW_DIR/WMT_SOC.cfg" ]; then
+        fail "$FW_DIR does not contain the WMT firmware"
+        return 1
+    fi
+    return 0
+}
+
 write_conf() {
     {
         echo "ctrl_interface=$CTRL"
@@ -247,8 +314,23 @@ start_wmt() {
         # The WLAN driver can create wlan0 during probe, before the firmware
         # has been downloaded.  Always keep wmt_launcher available so the
         # driver can fetch the ROM patch when the interface is opened.
-        if [ -x /system/bin/wmt_launcher ] && ! running wmt_launcher; then
-            log "starting wmt_launcher"
+        prepare_firmware || \
+            log "firmware preparation failed; trying $FW_DIR anyway"
+
+        # A launcher left over from an earlier failed attempt may still be
+        # using the wrong patch path.  Stop it so this attempt starts clean.
+        if running wmt_launcher; then
+            log "stopping stale wmt_launcher"
+            if [ -n "$BB" ]; then
+                "$BB" pkill wmt_launcher >/dev/null 2>&1
+            else
+                pkill wmt_launcher >/dev/null 2>&1
+            fi
+            sleep 1
+        fi
+
+        if [ -x /system/bin/wmt_launcher ]; then
+            log "starting wmt_launcher -p $FW_DIR/ -o 1"
             ( /system/bin/wmt_launcher -p "$FW_DIR/" -o 1 >>"$LOG" 2>&1 ) &
             echo $! > "$TMP/wmt_launcher.pid"
             sleep 1
@@ -622,7 +704,10 @@ cmd_diag() {
           /dev/fw_log_wmt /dev/fw_log_wifi 2>&1
     echo
     echo "== firmware =="
+    echo "-- $FW_DIR --"
     ls -l "$FW_DIR" 2>&1 | sed -n '1,40p'
+    echo "-- $FW_SRC --"
+    ls -l "$FW_SRC" 2>&1 | sed -n '1,40p'
     echo
     echo "== processes =="
     (ps -A 2>/dev/null || ps 2>/dev/null) | \

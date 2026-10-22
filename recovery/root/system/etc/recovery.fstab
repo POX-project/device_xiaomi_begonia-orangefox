@@ -40,8 +40,13 @@ odm                                             /odm                  ext4     r
 
 # --- common to both layouts ---
 /dev/block/platform/bootdevice/by-name/misc      /misc                 emmc     defaults                                                        defaults
-# FBEv2: metadata_encryption tells TWRP/vold how the metadata key is
-# wrapped; keydirectory alone is not enough to mount FBEv2 userdata.
-/dev/block/platform/bootdevice/by-name/userdata   /data       ext4     noatime,nosuid,nodev,noauto_da_alloc,errors=panic,inlinecrypt wait,check,formattable,quota,latemount,resize,reservedsize=128m,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0,metadata_encryption=aes-256-xts:wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption,fsverity
-/dev/block/platform/bootdevice/by-name/userdata   /data       f2fs     noatime,nosuid,nodev,discard,flush_merge,reserve_root=134217,resgid=1065,alloc_mode=reuse,fsync_mode=nobarrier,inlinecrypt wait,check,formattable,quota,latemount,reservedsize=128m,checkpoint=fs,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0,metadata_encryption=aes-256-xts:wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption,fsverity
+# Keep the userdata crypto flags identical to the known-good TWRP tree.
+# Do NOT force metadata_encryption or wrappedkey_v0 here: this ROM has no
+# /metadata/vold/metadata_encryption key and its keymaster rejects the
+# wrapped-key install.  TWRP retries without wrappedkey, so advertising it
+# only produces a failed first attempt (and the metadata flag makes TWRP
+# look for a key that does not exist).  keydirectory is still required so
+# TWRP detects FBE and runs the normal fscrypt DE/CE flow.
+/dev/block/platform/bootdevice/by-name/userdata   /data       ext4     noatime,nosuid,nodev,noauto_da_alloc,errors=panic,inlinecrypt wait,check,formattable,quota,latemount,resize,reservedsize=128m,fileencryption=aes-256-xts:aes-256-cts:v2,keydirectory=/metadata/vold/metadata_encryption
+/dev/block/platform/bootdevice/by-name/userdata   /data       f2fs     noatime,nosuid,nodev,discard,flush_merge,reserve_root=134217,resgid=1065,alloc_mode=reuse,fsync_mode=nobarrier,inlinecrypt wait,check,formattable,quota,latemount,reservedsize=128m,checkpoint=fs,fileencryption=aes-256-xts:aes-256-cts:v2,keydirectory=/metadata/vold/metadata_encryption
 /dev/block/platform/bootdevice/by-name/metadata  /metadata             ext4     noatime,nosuid,nodev,discard                                    wait,check,formattable,first_stage_mount
