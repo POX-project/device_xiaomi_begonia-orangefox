@@ -249,8 +249,22 @@ start_wmt() {
         # driver can fetch the ROM patch when the interface is opened.
         if [ -x /system/bin/wmt_launcher ] && ! running wmt_launcher; then
             log "starting wmt_launcher"
-            ( /system/bin/wmt_launcher -p "$FW_DIR/" >>"$LOG" 2>&1 ) &
+            ( /system/bin/wmt_launcher -p "$FW_DIR/" -o 1 >>"$LOG" 2>&1 ) &
             echo $! > "$TMP/wmt_launcher.pid"
+            sleep 1
+        fi
+
+        # Stock init passes `-o 1` to wmt_launcher; some recovery trees
+        # instead write 1 to /dev/wmtWifi after starting the launcher.  Do
+        # both: the ioctl path is the stock one, while the write covers
+        # kernels whose launcher ignores -o or was already running when the
+        # first bring-up attempt started.
+        if [ -e /dev/wmtWifi ]; then
+            log "powering on WLAN block via /dev/wmtWifi"
+            printf '1\n' > /dev/wmtWifi 2>>"$LOG" || \
+                log "could not write /dev/wmtWifi"
+        else
+            log "/dev/wmtWifi is missing before WLAN power-on"
         fi
 
         # Stock MediaTek init starts wlan_assistant as soon as
