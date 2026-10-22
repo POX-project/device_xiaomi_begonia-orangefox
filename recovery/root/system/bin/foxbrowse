@@ -1,0 +1,50 @@
+#!/system/bin/sh
+#
+# foxbrowse - Lynx text web browser for OrangeFox recovery (begonia).
+#
+# The recovery ramdisk has no ncurses or OpenSSL, so Lynx is shipped built
+# against musl together with its loader and libraries under
+# /system/etc/foxbrowse.  This wrapper points the musl loader at that private
+# library directory and at the bundled terminfo/CA store.
+#
+# Wi-Fi must be up first ("foxwifi on"), and DNS must work - foxwifi sets the
+# net.dns* properties and /etc/resolv.conf from the DHCP lease.
+#
+# Usage:
+#   foxbrowse                open the local start page
+#   foxbrowse URL            open a URL
+#   foxbrowse -dump URL      print the page as text and exit
+#   foxbrowse -source URL    print the raw HTML and exit
+#
+# Inside Lynx: arrows/PgUp/PgDn move, Enter follows a link, "g" goes to a URL,
+# "d" downloads, "q" quits, "h" shows help.
+
+D=/system/etc/foxbrowse
+L=$D/lib/ld-musl-aarch64.so.1
+B=$D/bin/lynx
+
+# fs_config gives files under /system/etc mode 0644, which strips the exec
+# bit from the loader and the browser.  /system is the ramdisk and is
+# writable, so put it back on first use.
+[ -x "$L" ] || chmod 0755 "$L" 2>/dev/null
+[ -x "$B" ] || chmod 0755 "$B" 2>/dev/null
+
+if [ ! -x "$L" ] || [ ! -x "$B" ]; then
+    echo "foxbrowse: browser payload missing under $D" >&2
+    exit 1
+fi
+
+[ -n "$TERM" ] || TERM=vt100
+export TERM
+export TERMINFO="$D/terminfo"
+export LYNX_CFG="$D/etc/lynx.cfg"
+export LYNX_LSS="$D/etc/lynx.lss"
+export SSL_CERT_FILE="$D/etc/ca-certificates.crt"
+export HOME=/tmp
+export TMPDIR=/tmp
+
+if [ "$#" -eq 0 ]; then
+    set -- "file://$D/etc/start.html"
+fi
+
+exec "$L" --library-path "$D/lib" "$B" "$@"
