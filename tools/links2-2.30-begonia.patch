@@ -1,5 +1,5 @@
 --- a/framebuf.c	2022-09-30 16:22:06.000000000 +0000
-+++ b/framebuf.c	2026-10-23 02:43:14.231324338 +0000
++++ b/framebuf.c	2026-10-23 02:50:21.580909334 +0000
 @@ -36,6 +36,8 @@
  #include <linux/fb.h>
  #include <linux/kd.h>
@@ -67,15 +67,18 @@
  	memcpy(&vt_mode, &vt_omode, sizeof(vt_mode));
  
  	vt_mode.mode = VT_PROCESS;
-@@ -909,6 +934,7 @@
+@@ -909,6 +934,10 @@
  {
  	int rs;
  	if (in_gr_operation <= 0) internal_error("fb_switch_shutdown: in_gr_operation %d", in_gr_operation);
-+	if (!fb_vt_ok) return;
++	if (!fb_vt_ok) {
++		in_gr_operation--;
++		return;
++	}
  	if (!fb_active && in_gr_operation == 1) {
  		EINTRLOOP(rs, ioctl(TTY, VT_RELDISP, 1));
  	}
-@@ -1114,6 +1140,272 @@
+@@ -1114,6 +1143,272 @@
  	EINTRLOOP(rs, fsync(fb_handle));
  }
  
@@ -348,7 +351,7 @@
  static int handle_fb_mouse(void)
  {
  	Gpm_Connect conn;
-@@ -1191,6 +1483,7 @@
+@@ -1191,6 +1486,7 @@
  
  static void unhandle_fb_mouse(void)
  {
@@ -356,7 +359,7 @@
  	if (fb_hgpm >= 0) set_handlers(fb_hgpm, (void (*)(void *))NULL, (void (*)(void *))NULL, NULL);
  	if (fb_hgpm >= -1) {
  		save_gpm_signals();
-@@ -1373,9 +1666,11 @@
+@@ -1373,9 +1669,11 @@
  		goto fail2;
  	}
  
@@ -370,7 +373,7 @@
  		goto fail3;
  	}
  
-@@ -1581,6 +1876,7 @@
+@@ -1581,6 +1879,7 @@
  	global_mouse_hidden = 1;
  	last_mouse_buttons = B_MOVE;
  	handle_fb_mouse();
