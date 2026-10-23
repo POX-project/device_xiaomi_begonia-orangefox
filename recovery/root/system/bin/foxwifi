@@ -575,10 +575,12 @@ wifi_down() {
 }
 
 set_dhcp_dns() {
-    # Recovery has no netd, so bionic's resolver only looks at the
-    # net.dns1..4 system properties.  Writing /etc/resolv.conf alone is not
-    # enough for anything that uses getaddrinfo (repo, curl, the OrangeFox
-    # downloaders): they fail with "unable to resolve host".
+    # Two consumers, two mechanisms:
+    #   * musl curl/lynx read /etc/resolv.conf directly (this is what works
+    #     in recovery, because bionic's resolver has no netd to feed it).
+    #   * bionic tools read neither resolv.conf nor net.dns* on Android 12,
+    #     so they still cannot resolve; the net.dns props are kept only for
+    #     older consumers and for diagnostics.
     servers=$(awk '/^[[:space:]]*nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null)
     [ -n "$servers" ] || servers="1.1.1.1 8.8.8.8"
 
@@ -592,6 +594,29 @@ set_dhcp_dns() {
         setprop "net.dns$i.$IFACE" "$d" 2>/dev/null
     done
     log "DNS: $(printf '%s ' $servers)"
+}
+
+# TLS certificate validation needs a sane clock.  Recovery has no RTC battery
+# on some units and boots at 1970, which makes every HTTPS request fail with
+# "certificate is not yet valid".  There is no NTP applet in the bundled
+# BusyBox, so take the Date header from a plain-HTTP request to a literal IP
+# (no DNS needed) and set the clock from it.
+sync_time() {
+    year=$(date -u +%Y 2>/dev/null)
+    case "$year" in ''|*[!0-9]*) year=1970 ;; esac
+    [ "$year" -ge 2024 ] && return 0
+    command -v curl >/dev/null 2>&1 || return 1
+
+    hdr=$(curl -s --max-time 8 -D - -o /dev/null http://1.1.1.1 2>/dev/null \
+          | tr -d '\r' \
+          | awk -F': ' 'tolower($1)=="date" {print $2; exit}')
+    [ -n "$hdr" ] || return 1
+
+    epoch=$(date -u -D '%a, %d %b %Y %H:%M:%S GMT' -d "$hdr" +%s 2>/dev/null)
+    case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+    date -u -s "@$epoch" >/dev/null 2>&1 || return 1
+    log "clock set to $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+    return 0
 }
 
 try_udhcpc() {
@@ -634,6 +659,7 @@ start_dhcp() {
 
     [ -n "$ip" ] || { fail "no DHCP lease on $IFACE"; return 1; }
     set_dhcp_dns
+    sync_time || log "clock sync skipped (still $(date -u '+%Y-%m-%d %H:%M:%S UTC'))"
     log "DHCP lease: $ip"
     return 0
 }
@@ -804,6 +830,33 @@ cmd_status() {
     fi
 }
 
+# Resolver/TLS probe.  bionic's resolver does not work without netd, so use
+# the musl curl wrapper for the hostname and HTTPS legs.
+cmd_dns() {
+    host=${1:-example.com}
+    echo "resolv.conf:"
+    if [ -f /etc/resolv.conf ]; then
+        sed 's/^/  /' /etc/resolv.conf
+    else
+        echo "  (missing)"
+    fi
+    printf 'net.dns props:'
+    for i in 1 2 3 4; do printf ' %s' "$(getprop "net.dns$i" 2>/dev/null)"; done
+    echo
+
+    printf 'IP path  (http://1.1.1.1):       '
+    curl -sS --max-time 8 -o /dev/null -w 'HTTP %{http_code} in %{time_total}s\n' \
+        http://1.1.1.1 2>&1 || echo "failed"
+    printf 'DNS+TLS  (https://%s): ' "$host"
+    curl -sS --max-time 15 -o /dev/null -w 'HTTP %{http_code} in %{time_total}s\n' \
+        "https://$host" 2>&1 || echo "failed"
+}
+
+cmd_time() {
+    sync_time || { fail "could not read time from HTTP (is WiFi connected?)"; return 1; }
+    date -u '+%Y-%m-%d %H:%M:%S UTC'
+}
+
 cmd_ping() {
     pingbin=/system/bin/ping
     if [ ! -x "$pingbin" ]; then
@@ -816,7 +869,8 @@ cmd_ping() {
     else
         gw=$("$BB" ip route 2>/dev/null | awk '/^default/ {print $3; exit}')
         [ -n "$gw" ] || gw=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}')
-        targets="$gw 1.1.1.1 google.com"
+        targets="$gw 1.1.1.1"
+        echo "(hostnames need 'foxwifi dns', not ping: bionic has no resolver in recovery)"
     fi
 
     rc=0
@@ -1022,6 +1076,9 @@ Usage: foxwifi <command> [args]
   disconnect
   save | forget | auto      Remember/forget/auto-connect a network
   daemon                    Init service (keeps the link alive)
+  ping [host ...]           Ping gateway/DNS/internet (IP addresses)
+  dns [host]                Show resolver state; test IP, DNS and TLS
+  time                      Set the clock from an HTTP Date header
   diag                      Show WMT, WiFi and crypto diagnostics
   log [N]                   Show the last N log lines (default 80)
 EOF
@@ -1056,6 +1113,14 @@ case "$1" in
     ping)
         shift
         cmd_ping "$@"
+        exit $?
+        ;;
+    dns)
+        cmd_dns "$2"
+        exit $?
+        ;;
+    time)
+        cmd_time
         exit $?
         ;;
     scan)

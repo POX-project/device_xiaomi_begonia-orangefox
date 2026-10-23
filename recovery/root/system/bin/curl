@@ -1,0 +1,37 @@
+#!/system/bin/sh
+#
+# curl - HTTPS-aware downloader for OrangeFox recovery (begonia).
+#
+# Android's bionic resolver does not use /etc/resolv.conf or the net.dns*
+# properties: without netd there is nobody to fill its resolver cache, so the
+# AOSP curl fails every hostname with "Could not resolve host".  This wrapper
+# runs a statically linked musl curl instead.  musl reads /etc/resolv.conf and
+# /etc/hosts directly, so DNS works as soon as foxwifi has written a lease.
+#
+# It also pins the CA bundle.  AOSP curl is compiled with
+# /system/etc/security/cacerts (a directory of hashed certs) but the ramdisk
+# ships the Mozilla bundle as /system/etc/security/cacert.pem, which caused
+# "unable to get local issuer certificate" from adb shells and from services
+# that never inherited init's CURL_CA_BUNDLE export.
+#
+# Everything is a normal curl flag, so "curl -LO URL" keeps working.
+
+D=/system/etc/foxnet
+B=$D/bin/curl
+
+# fs_config assigns 0644 to files under /system/etc and strips the exec bit
+# from the payload.  /system is the writable ramdisk, so put it back.
+if [ ! -x "$B" ]; then
+    chmod 0755 "$B" 2>/dev/null
+fi
+if [ ! -x "$B" ]; then
+    echo "curl: network payload missing ($B)" >&2
+    exit 127
+fi
+
+CA=/system/etc/security/cacert.pem
+[ -f "$CA" ] || CA=$D/etc/ca-certificates.crt
+[ -n "$CURL_CA_BUNDLE" ] || export CURL_CA_BUNDLE="$CA"
+[ -n "$SSL_CERT_FILE" ] || export SSL_CERT_FILE="$CA"
+
+exec "$B" "$@"

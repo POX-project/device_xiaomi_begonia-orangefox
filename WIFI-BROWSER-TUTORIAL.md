@@ -98,9 +98,33 @@ curl -LO https://example.com/file.zip
 curl -fsSL https://example.com/install.sh -o /tmp/install.sh
 ```
 
-Downloads land in the current directory, so use `/tmp` or `/sdcard` when you need a known path. `curl` validates HTTPS against the bundled Mozilla CA file (`CURL_CA_BUNDLE=/system/etc/security/cacert.pem`, exported by init). If the variable is missing in your shell, add `--cacert /system/etc/security/cacert.pem`. BusyBox `wget` goes through `ssl_client`, which does **not** validate certificates in this build — prefer `curl` for HTTPS.
+Downloads land in the current directory, so use `/tmp` or `/sdcard` when you
+need a known path.
 
-`curl` is built from `external/curl`; the `wifi-browser` CI workflow clones that project before building because the minimal manifest removes it.
+`curl` here is a **statically linked musl build**, not AOSP's bionic one,
+because Android's resolver cannot work in recovery: it ignores
+`/etc/resolv.conf` and the `net.dns*` properties, and there is no `netd` to
+fill its cache. The musl build reads `/etc/resolv.conf` and `/etc/hosts`
+directly, so hostnames work as soon as `foxwifi` has a DHCP lease. The wrapper
+at `/system/bin/curl` also pins `CURL_CA_BUNDLE` to the bundled Mozilla bundle
+(`/system/etc/security/cacert.pem`), so HTTPS validates from the recovery
+terminal and from `adb shell` (init's environment is not inherited by adbd).
+
+BusyBox `wget` still uses bionic and `ssl_client`; it does **not** validate
+certificates and cannot resolve hostnames in recovery. Prefer `curl` for
+anything that needs DNS or TLS, or pass a literal IP to `wget`.
+
+Check the whole path with:
+
+```sh
+foxwifi dns            # resolver contents + IP + DNS + TLS probes
+foxwifi time           # set the clock from an HTTP Date header
+```
+
+A wrong clock makes every certificate look "not yet valid". `foxwifi connect`
+already tries `foxwifi time` automatically after DHCP and is a no-op once the
+year is 2024 or later.
+
 
 ## Part 2 — Open the FoxWeb dashboard
 

@@ -156,8 +156,15 @@ wireless ADB, USB fallback, security notes and troubleshooting.
   - TWRP's static `dhcpcd`, with a BusyBox `udhcpc` fallback for encrypted
     devices where `/data/misc/dhcp` is unavailable.
   - A static BusyBox 1.36.1 in `/system/bin/busybox` (contains `httpd` with CGI).
-  - `wget` (a BusyBox applet) and a real `curl` built from `external/curl`,
-    plus the Mozilla CA bundle at `/system/etc/security/cacert.pem`.
+  - `wget` (a BusyBox applet) and a real `curl`.  `curl` is a **static musl
+    build** shipped in `recovery/root/system/etc/foxnet`, not AOSP's bionic
+    `external/curl`: bionic's resolver ignores `/etc/resolv.conf` and the
+    `net.dns*` properties and needs netd, which recovery does not run.  musl
+    reads `/etc/resolv.conf` directly.  `/system/bin/curl` is a wrapper that
+    also pins `CURL_CA_BUNDLE` to the Mozilla bundle at
+    `/system/etc/security/cacert.pem`.
+  - `/etc/resolv.conf` (public fallback, rewritten from the DHCP lease),
+    `/etc/hosts`, and `foxwifi dns` / `foxwifi time` diagnostics.
   - `foxwifi`, `foxweb`, `foxadb` and the dashboard in
     `recovery/root/system/etc/foxwww`.
   - An offline copy of `qrcode-generator` (MIT, `qrcode.LICENSE.txt`) for the
@@ -170,20 +177,18 @@ wireless ADB, USB fallback, security notes and troubleshooting.
   recovery-only no-op `hidl.h` into
   `external/wpa_supplicant_8/wpa_supplicant/`.  The `wifi-browser` CI branch
   does both automatically.
-- `external/curl` is removed by the minimal manifest as well.  The builder
-  clones it at `android-12.1.0_r4`, and the recovery build relinks the `curl`
-  binary into `/system/bin/curl`.  `wget` is exposed by
-  `recovery/root/system/bin/wget`, which calls the BusyBox applet.
-  `CURL_CA_BUNDLE` is exported by `init.recovery.mt6785.rc`, so curl validates
-  HTTPS against `/system/etc/security/cacert.pem`; BusyBox wget uses
-  `ssl_client`, which does not validate certificates in this build.
+- `external/curl` is no longer used.  The minimal manifest removes it, and
+  bionic's resolver cannot work without netd, so the tree ships a static musl
+  `curl` in `recovery/root/system/etc/foxnet/bin/curl` with a wrapper at
+  `recovery/root/system/bin/curl`.  The wrapper sets `CURL_CA_BUNDLE` to
+  `/system/etc/security/cacert.pem` for every caller, including `adb shell`
+  (adbd starts before init's `export` and never inherits it).  `wget` is
+  exposed by `recovery/root/system/bin/wget`, which calls the BusyBox applet;
+  it still uses bionic and `ssl_client`, so it cannot resolve hostnames and
+  does not validate HTTPS certificates in this build.
 
-  For a local build, clone the removed project before lunch:
-
-  ```sh
-  git clone --depth=1 -b android-12.1.0_r4 \
-      https://android.googlesource.com/platform/external/curl external/curl
-  ```
+  `curl` is rebuilt from `device/xiaomi/begonia/tools/build-foxnet.sh`; see
+  that script for the exact musl/OpenSSL/curl versions.
 
 #### Using it
 

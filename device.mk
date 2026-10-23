@@ -75,21 +75,13 @@ TW_RECOVERY_ADDITIONAL_RELINK_LIBRARY_FILES += \
 
 # curl for downloading files from recovery.
 #
-# external/curl is removed by the minimal TWRP manifest, so the builder clones
-# it before lunch.  Keep this conditional: a tree built without that source
-# (or the plain unified branch) still builds, just without curl.
+# Do NOT build AOSP's external/curl for recovery.  bionic has no netd here, so
+# its resolver cache never gets nameservers and every hostname lookup fails
+# with "Could not resolve host" (the net.dns* properties are not consulted by
+# getaddrinfo in Android 12).  Instead we ship a statically linked musl curl at
+# recovery/root/system/etc/foxnet/bin/curl plus a wrapper at
+# recovery/root/system/bin/curl.  musl reads /etc/resolv.conf directly, and
+# the wrapper pins CURL_CA_BUNDLE to the bundled Mozilla bundle.
 #
 # wget is already a BusyBox applet; recovery/root/system/bin/wget exposes it.
-ifneq ($(wildcard external/curl/Android.bp),)
-TARGET_RECOVERY_DEVICE_MODULES += \
-    curl
-
-TW_RECOVERY_ADDITIONAL_RELINK_BINARY_FILES += \
-    $(TARGET_OUT_EXECUTABLES)/curl
-
-# curl is linked against BoringSSL and zlib.  libssl.so is already relinked
-# above for wpa_supplicant; pull in its runtime companions explicitly.
-TW_RECOVERY_ADDITIONAL_RELINK_LIBRARY_FILES += \
-    $(TARGET_OUT_SHARED_LIBRARIES)/libcrypto.so \
-    $(TARGET_OUT_SHARED_LIBRARIES)/libz.so
-endif
+# wget still uses bionic, so prefer curl for anything that needs DNS/TLS.
