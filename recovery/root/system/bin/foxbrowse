@@ -1,50 +1,88 @@
 #!/system/bin/sh
 #
-# foxbrowse - Lynx text web browser for OrangeFox recovery (begonia).
+# foxbrowse - full-screen graphical browser for OrangeFox recovery (begonia).
 #
-# The recovery ramdisk has no ncurses or OpenSSL, so Lynx is shipped built
-# against musl together with its loader and libraries under
-# /system/etc/foxbrowse.  This wrapper points the musl loader at that private
-# library directory and at the bundled terminfo/CA store.
-#
-# Wi-Fi must be up first ("foxwifi on"), and DNS must work - foxwifi sets the
-# net.dns* properties and /etc/resolv.conf from the DHCP lease.
+# Links2 draws directly to /dev/graphics/fb0 and reads the touchscreen and
+# hardware keys from /dev/input.  OrangeFox's GUI also owns that framebuffer
+# and consumes the same input, so freeze it with SIGSTOP for the duration of
+# the browser and resume it on exit.  The shell that launched us is a separate
+# process and keeps running.
 #
 # Usage:
-#   foxbrowse                open the local start page
-#   foxbrowse URL            open a URL
-#   foxbrowse -dump URL      print the page as text and exit
-#   foxbrowse -source URL    print the raw HTML and exit
+#   foxbrowse                 open the local start page
+#   foxbrowse URL             open a URL (https:// is assumed for bare hosts)
 #
-# Inside Lynx: arrows/PgUp/PgDn move, Enter follows a link, "g" goes to a URL,
-# "d" downloads, "q" quits, "h" shows help.
+# Touch: tap = click, vertical swipe = scroll.
+# Keys:  volume up/down = page up/down, power = quit.
+#
+# There is deliberately no on-screen keyboard: typing a new address is done in
+# the recovery terminal before launching the browser.
 
 D=/system/etc/foxbrowse
-L=$D/lib/ld-musl-aarch64.so.1
-B=$D/bin/lynx
+B=$D/bin/links
 
-# fs_config gives files under /system/etc mode 0644, which strips the exec
-# bit from the loader and the browser.  /system is the ramdisk and is
-# writable, so put it back on first use.
-[ -x "$L" ] || chmod 0755 "$L" 2>/dev/null
-[ -x "$B" ] || chmod 0755 "$B" 2>/dev/null
-
-if [ ! -x "$L" ] || [ ! -x "$B" ]; then
-    echo "foxbrowse: browser payload missing under $D" >&2
-    exit 1
+# fs_config assigns 0644 to files under /system/etc; restore the exec bit.
+if [ ! -x "$B" ]; then
+    chmod 0755 "$B" 2>/dev/null
+fi
+if [ ! -x "$B" ]; then
+    echo "foxbrowse: browser payload missing ($B)" >&2
+    exit 127
 fi
 
-[ -n "$TERM" ] || TERM=vt100
-export TERM
-export TERMINFO="$D/terminfo"
-export LYNX_CFG="$D/etc/lynx.cfg"
-export LYNX_LSS="$D/etc/lynx.lss"
-export SSL_CERT_FILE="$D/etc/ca-certificates.crt"
-export HOME=/tmp
-export TMPDIR=/tmp
+URL=$1
+if [ -z "$URL" ]; then
+    URL="file://$D/etc/start.html"
+fi
+case "$URL" in
+    *://*|file:*) ;;
+    *) URL="https://$URL" ;;
+esac
 
-if [ "$#" -eq 0 ]; then
-    set -- "file://$D/etc/start.html"
+# OpenSSL's compiled default CA path is the build prefix; point it at the
+# bundle the recovery actually ships.
+[ -n "$SSL_CERT_FILE" ] || export SSL_CERT_FILE=/system/etc/security/cacert.pem
+[ -n "$FONTCONFIG_FILE" ] || export FONTCONFIG_FILE=$D/etc/fonts.conf
+
+# TLS fails outright if the clock is still in 1970.  Only pay for a time sync
+# when the clock is obviously wrong and foxwifi is available.
+YEAR=$(date +%Y 2>/dev/null)
+if [ -n "$YEAR" ] && [ "$YEAR" -lt 2024 ] && [ -x /system/bin/foxwifi ]; then
+    /system/bin/foxwifi time >/dev/null 2>&1
 fi
 
-exec "$L" --library-path "$D/lib" "$B" "$@"
+RPIDS=$(pidof recovery 2>/dev/null)
+resume_gui() {
+    for p in $RPIDS; do
+        kill -CONT "$p" 2>/dev/null
+    done
+}
+trap resume_gui EXIT INT TERM HUP
+
+# Stop the recovery GUI from drawing over us or stealing touch/key events.
+for p in $RPIDS; do
+    kill -STOP "$p" 2>/dev/null
+done
+sleep 0.2
+
+# The recovery GUI owns the pty and is stopped while we run, so never let the
+# browser fill the pty with diagnostics.
+LOG=/tmp/foxbrowse.log
+"$B" -g -driver fb \
+    -font /twres/fonts/Roboto-Regular.ttf \
+    -font-bold /twres/fonts/Roboto-Medium.ttf \
+    -font-monospaced /twres/fonts/FiraCode-Regular.ttf \
+    -font-monospaced-bold /twres/fonts/FiraCode-Medium.ttf \
+    -html-user-font-size 26 \
+    -menu-font-size 22 \
+    -download-dir /tmp \
+    "$URL" >"$LOG" 2>&1
+RC=$?
+
+resume_gui
+trap - EXIT INT TERM HUP
+if [ $RC -ne 0 ]; then
+    echo "foxbrowse: browser exited with status $RC" >&2
+    [ -s "$LOG" ] && tail -20 "$LOG" >&2
+fi
+exit $RC

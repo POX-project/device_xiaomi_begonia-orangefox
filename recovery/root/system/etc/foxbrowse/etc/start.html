@@ -1,16 +1,29 @@
 <!DOCTYPE html>
 <html>
-<head><title>foxbrowse - begonia recovery</title></head>
+<head>
+<title>FoxBrowse</title>
+<style>
+body { background: #101418; color: #e8eef5; font-family: sans-serif; margin: 24px; }
+h1 { color: #7fd1ff; font-size: 34px; margin: 0 0 8px 0; }
+p { font-size: 22px; line-height: 1.35; }
+a { color: #9be7a4; }
+li { font-size: 24px; margin: 14px 0; }
+.small { color: #9aa7b4; font-size: 19px; }
+</style>
+</head>
 <body>
-<h1>foxbrowse</h1>
-<p>Text-mode web browser running inside OrangeFox recovery.</p>
+<h1>FoxBrowse</h1>
+<p>Tap a link to open it. Swipe up/down to scroll.</p>
 <ul>
-  <li><a href="https://example.com/">example.com</a> - connectivity check</li>
-  <li><a href="https://duckduckgo.com/lite/">DuckDuckGo Lite</a> - search</li>
-  <li><a href="https://github.com/methylphetamine">GitHub - methylphetamine</a></li>
-  <li><a href="https://gofile.io/d/0bfJryaE">Latest OrangeFox ZIP (Gofile)</a></li>
+<li><a href="https://example.com/">example.com</a> &mdash; connectivity check</li>
+<li><a href="https://en.m.wikipedia.org/">Wikipedia</a></li>
+<li><a href="https://lite.duckduckgo.com/lite/">DuckDuckGo Lite</a></li>
+<li><a href="https://news.ycombinator.com/">Hacker News</a></li>
+<li><a href="https://github.com/">GitHub</a></li>
 </ul>
-<p>Press <b>g</b> to type a URL, <b>q</b> to quit, <b>h</b> for help.</p>
-<p>If pages fail to open, check <b>foxwifi status</b> and <b>foxwifi ping</b>.</p>
+<p class="small">Volume Up / Down = page up / down.<br>
+Power = quit and return to recovery.<br>
+To open another address, quit and run:<br>
+<b>foxbrowse https://example.com</b></p>
 </body>
 </html>

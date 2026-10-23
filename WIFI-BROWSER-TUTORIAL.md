@@ -126,6 +126,36 @@ already tries `foxwifi time` automatically after DHCP and is a no-op once the
 year is 2024 or later.
 
 
+## Part 1b — Browse the web on the phone
+
+The recovery also ships **FoxBrowse**, a full-screen Links2 browser that renders
+pages on the phone itself (images included). It needs a working network and a
+correct clock; if HTTPS fails with a certificate error, run `foxwifi time` once.
+
+From the recovery terminal:
+
+```sh
+foxbrowse                        # start page with bookmarks
+foxbrowse https://example.com    # open an address directly
+foxbrowse en.m.wikipedia.org     # https:// is assumed
+```
+
+Controls:
+
+- **Tap** a link to follow it.
+- **Swipe up/down** to scroll.
+- **Volume up/down** = page up/down.
+- **Power** = quit and return to the OrangeFox GUI.
+
+While the browser runs, OrangeFox's GUI is paused (`SIGSTOP`) because both it
+and Links2 need `/dev/graphics/fb0` and the touchscreen. The shell that launched
+the browser is a separate process and keeps running; quitting the browser
+resumes the GUI.
+
+There is intentionally **no on-screen keyboard**. To open a new address, quit
+the browser and run `foxbrowse <url>` again, or edit the bookmarks in
+`/system/etc/foxbrowse/etc/start.html`.
+
 ## Part 2 — Open the FoxWeb dashboard
 
 `foxweb` runs as an init service and serves the dashboard on TCP port 8080. Get the address and token:

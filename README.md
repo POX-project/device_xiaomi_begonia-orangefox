@@ -163,6 +163,21 @@ wireless ADB, USB fallback, security notes and troubleshooting.
     reads `/etc/resolv.conf` directly.  `/system/bin/curl` is a wrapper that
     also pins `CURL_CA_BUNDLE` to the Mozilla bundle at
     `/system/etc/security/cacert.pem`.
+  - `foxbrowse`, a full-screen **Links2** browser.  It draws directly to
+    `/dev/graphics/fb0` and reads the touchscreen and hardware keys from
+    `/dev/input`, so it can render real pages instead of Lynx's text output.
+    OrangeFox's GUI is stopped with `SIGSTOP` while the browser owns the
+    framebuffer and resumed on exit.  Launch it from the recovery terminal:
+
+    ```sh
+    foxbrowse                      # local start page/bookmarks
+    foxbrowse https://example.com
+    ```
+
+    Tap to click, swipe up/down to scroll, volume up/down for page up/down and
+    power to quit.  There is no on-screen keyboard: addresses are passed on the
+    command line or reached through links and bookmarks.
+
   - `/etc/resolv.conf` (public fallback, rewritten from the DHCP lease),
     `/etc/hosts`, and `foxwifi dns` / `foxwifi time` diagnostics.
   - `foxwifi`, `foxweb`, `foxadb` and the dashboard in

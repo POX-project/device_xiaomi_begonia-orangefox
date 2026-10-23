@@ -576,7 +576,7 @@ wifi_down() {
 
 set_dhcp_dns() {
     # Two consumers, two mechanisms:
-    #   * musl curl/lynx read /etc/resolv.conf directly (this is what works
+    #   * musl curl and the Links2 browser read /etc/resolv.conf directly (this is what works
     #     in recovery, because bionic's resolver has no netd to feed it).
     #   * bionic tools read neither resolv.conf nor net.dns* on Android 12,
     #     so they still cannot resolve; the net.dns props are kept only for
