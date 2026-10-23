@@ -35,6 +35,13 @@
 #include <linux/fb.h>
 #include <linux/input.h>
 
+#ifndef TIOCGPTN
+#define TIOCGPTN _IOR('T', 0x30, unsigned int)
+#endif
+#ifndef TIOCSPTLCK
+#define TIOCSPTLCK _IOW('T', 0x31, int)
+#endif
+
 #include "font8x8.h"
 
 #ifndef ABS_CNT
@@ -800,22 +807,25 @@ static int find_volume_key(void)
 static int start_browser(char **argv)
 {
     int slave;
-    char *slave_name;
+    char slave_name[64];
+    int ptn = 0, unlock = 0;
 
-    master_fd = posix_openpt(O_RDWR | O_NOCTTY);
+    /* Use /dev/ptmx directly instead of grantpt()/ptsname().  Recovery runs
+     * as root, and this avoids depending on a libc-specific pt_chown helper
+     * (notably when the helper is linked against static glibc). */
+    master_fd = open("/dev/ptmx", O_RDWR | O_NOCTTY);
     if (master_fd < 0) {
-        logmsg("posix_openpt failed");
+        logmsg("open /dev/ptmx failed");
         return -1;
     }
-    if (grantpt(master_fd) < 0 || unlockpt(master_fd) < 0) {
-        logmsg("grantpt/unlockpt failed");
+    if (ioctl(master_fd, TIOCSPTLCK, &unlock) < 0 ||
+        ioctl(master_fd, TIOCGPTN, &ptn) < 0) {
+        logmsg("cannot allocate pty");
+        close(master_fd);
+        master_fd = -1;
         return -1;
     }
-    slave_name = ptsname(master_fd);
-    if (!slave_name) {
-        logmsg("ptsname failed");
-        return -1;
-    }
+    snprintf(slave_name, sizeof(slave_name), "/dev/pts/%d", ptn);
 
     child_pid = fork();
     if (child_pid < 0) {
