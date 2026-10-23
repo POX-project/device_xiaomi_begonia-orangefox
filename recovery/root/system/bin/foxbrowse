@@ -43,6 +43,8 @@ esac
 # bundle the recovery actually ships.
 [ -n "$SSL_CERT_FILE" ] || export SSL_CERT_FILE=/system/etc/security/cacert.pem
 [ -n "$FONTCONFIG_FILE" ] || export FONTCONFIG_FILE=$D/etc/fonts.conf
+[ -n "$HOME" ] || export HOME=/tmp
+[ -n "$TMPDIR" ] || export TMPDIR=/tmp
 
 # TLS fails outright if the clock is still in 1970.  Only pay for a time sync
 # when the clock is obviously wrong and foxwifi is available.
