@@ -26,7 +26,23 @@ else
     exit 1
 fi
 
-"$CC" \
+SYSROOT=
+case "$CC" in
+    *aarch64-linux-gnu-gcc*)
+        SYSROOT=/usr/aarch64-linux-gnu
+        ;;
+esac
+if [ -n "$SYSROOT" ] && [ -d "$SYSROOT" ]; then
+    set -- --sysroot="$SYSROOT"
+else
+    set --
+fi
+
+echo "== compiler: $CC"
+"$CC" --version | head -1
+"$CC" -print-sysroot 2>/dev/null || true
+
+"$CC" "$@" \
     -D_GNU_SOURCE -Os -static -s -Wall -Wextra \
     -I"$TOP/tools" \
     -o "$OUT" "$TOP/tools/foxkbd.c"
