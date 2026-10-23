@@ -1065,11 +1065,369 @@ drop_lock() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# foxwifi tui - full-screen network picker for a real terminal
+#
+# The recovery GUI terminal only displays output, so this is meant for
+# `adb shell`, a serial console or any terminal that forwards keystrokes.  It
+# is pure shell: the ramdisk has no curses library and no room for another
+# binary.  Keys are read one byte at a time with stty min/time, which also
+# keeps arrow keys readable without ncurses.
+# ---------------------------------------------------------------------------
+
+TUI_LIST=$TMP/tui.list
+TUI_TAB=$(printf '\t')
+TUI_ESC=$(printf '\033')
+TUI_CR=$(printf '\r')
+TUI_ROWS=24
+TUI_COLS=80
+TUI_STTY=
+TUI_DD=
+TUI_KEY=
+TUI_SEL=0
+TUI_TOTAL=0
+TUI_MSG=
+
+tui_size() {
+    _tui_sz=$(stty size 2>/dev/null)
+    case "$_tui_sz" in
+        [0-9]*' '[0-9]*)
+            TUI_ROWS=${_tui_sz% *}
+            TUI_COLS=${_tui_sz#* }
+            ;;
+    esac
+    case "$TUI_ROWS" in ''|*[!0-9]*) TUI_ROWS=24 ;; esac
+    case "$TUI_COLS" in ''|*[!0-9]*) TUI_COLS=80 ;; esac
+    [ "$TUI_ROWS" -ge 12 ] || TUI_ROWS=24
+    [ "$TUI_COLS" -ge 40 ] || TUI_COLS=80
+}
+
+tui_fit() {
+    printf '%s' "$1" | cut -c "1-$2"
+}
+
+tui_pad() {
+    _tui_s=$1
+    while [ ${#_tui_s} -lt "$2" ]; do _tui_s="$_tui_s "; done
+    printf '%s' "$_tui_s"
+}
+
+tui_rule() {
+    _tui_r=$(printf '%*s' "$1" '' | tr ' ' '-')
+    printf '%s' "$_tui_r"
+}
+
+tui_bar() {
+    case "$1" in
+        ''|*[!0-9-]*) printf '[    ]'; return 0 ;;
+    esac
+    if [ "$1" -ge -60 ]; then printf '[####]'
+    elif [ "$1" -ge -70 ]; then printf '[### ]'
+    elif [ "$1" -ge -80 ]; then printf '[##  ]'
+    else printf '[#   ]'
+    fi
+}
+
+tui_header() {
+    _tui_st=$(get_state)
+    [ -n "$_tui_st" ] || _tui_st=off
+    _tui_ss=$(get_ssid)
+    [ -n "$_tui_ss" ] || _tui_ss=-
+    _tui_ip=$(get_ip)
+    [ -n "$_tui_ip" ] || _tui_ip=-
+    _tui_dns=$(awk '/^[[:space:]]*nameserver/ {print $2; exit}' /etc/resolv.conf 2>/dev/null)
+    [ -n "$_tui_dns" ] || _tui_dns=-
+    tui_fit " $IFACE  $_tui_st  ssid \"$_tui_ss\"  ip $_tui_ip  dns $_tui_dns" "$TUI_COLS"
+}
+
+tui_draw() {
+    tui_size
+    _tui_vis=$((TUI_ROWS - 8))
+    [ "$_tui_vis" -ge 1 ] || _tui_vis=1
+
+    _tui_top=$((TUI_SEL - _tui_vis / 2))
+    [ "$_tui_top" -gt $((TUI_TOTAL - _tui_vis)) ] && _tui_top=$((TUI_TOTAL - _tui_vis))
+    [ "$_tui_top" -lt 0 ] && _tui_top=0
+
+    printf '\033[H\033[2J'
+    printf '%s\n' "$(tui_fit " foxwifi - WiFi networks" "$TUI_COLS")"
+    tui_header
+    printf '%s\n' "$(tui_rule "$TUI_COLS")"
+    printf '%s\n' "$(tui_fit "   $(tui_pad SSID 30)$(tui_pad SEC 6)$(tui_pad SIG 6)dBm" "$TUI_COLS")"
+
+    _tui_i=0
+    _tui_printed=0
+    while IFS="$TUI_TAB" read -r _tui_ssid _tui_sec _tui_sig _tui_bssid; do
+        if [ "$_tui_i" -ge "$_tui_top" ] && [ "$_tui_i" -lt $((_tui_top + _tui_vis)) ]; then
+            _tui_mark='  '
+            [ "$_tui_i" -eq "$TUI_SEL" ] && _tui_mark='> '
+            _tui_line="$_tui_mark$(tui_pad "$(tui_fit "$_tui_ssid" 30)" 31)$(tui_pad "$_tui_sec" 6)$(tui_pad "$(tui_bar "$_tui_sig")" 7)$_tui_sig"
+            if [ "$_tui_i" -eq "$TUI_SEL" ]; then
+                printf '\033[7m%s\033[0m\n' "$(tui_fit "$_tui_line" "$TUI_COLS")"
+            else
+                printf '%s\n' "$(tui_fit "$_tui_line" "$TUI_COLS")"
+            fi
+            _tui_printed=$((_tui_printed + 1))
+        fi
+        _tui_i=$((_tui_i + 1))
+    done < "$TUI_LIST"
+
+    if [ "$TUI_TOTAL" -eq 0 ]; then
+        printf '%s\n' "   (no networks yet - press s to scan, o to start WiFi)"
+        _tui_printed=$((_tui_printed + 1))
+    fi
+    while [ "$_tui_printed" -lt "$_tui_vis" ]; do
+        printf '\n'
+        _tui_printed=$((_tui_printed + 1))
+    done
+
+    printf '%s\n' "$(tui_rule "$TUI_COLS")"
+    printf '%s\n' "$(tui_fit " up/down move   enter connect   s scan   d disconnect" "$TUI_COLS")"
+    printf '%s\n' "$(tui_fit " o on   x off   m manual SSID   p ping test   q quit" "$TUI_COLS")"
+    printf '%s\n' "$(tui_fit " $TUI_MSG" "$TUI_COLS")"
+}
+
+tui_readbyte() {
+    [ -n "$TUI_DD" ] && $TUI_DD bs=1 count=1 2>/dev/null
+}
+
+tui_readkey() {
+    _tui_k=$(tui_readbyte)
+    TUI_KEY=idle
+    [ -n "$_tui_k" ] || return 0
+    if [ "$_tui_k" = "$TUI_ESC" ]; then
+        # Arrow keys arrive as ESC [ A..D; ignore anything else.
+        _tui_a=$(tui_readbyte)
+        _tui_b=$(tui_readbyte)
+        case "$_tui_a$_tui_b" in
+            '[A') TUI_KEY=up ;;
+            '[B') TUI_KEY=down ;;
+            '[C') TUI_KEY=right ;;
+            '[D') TUI_KEY=left ;;
+            *)    TUI_KEY=esc ;;
+        esac
+        return 0
+    fi
+    case "$_tui_k" in
+        k) TUI_KEY=up ;;
+        j) TUI_KEY=down ;;
+        q|Q) TUI_KEY=quit ;;
+        s|S) TUI_KEY=scan ;;
+        d|D) TUI_KEY=disconnect ;;
+        o|O) TUI_KEY=on ;;
+        x|X) TUI_KEY=off ;;
+        m|M) TUI_KEY=manual ;;
+        p|P) TUI_KEY=ping ;;
+        r|R) TUI_KEY=redraw ;;
+        *)
+            [ "$_tui_k" = "$TUI_CR" ] && TUI_KEY=enter
+            ;;
+    esac
+}
+
+tui_prompt() {
+    # $1 = prompt, $2 = "silent" to hide the typed text; sets TUI_ANSWER
+    printf '\033[H\033[2J'
+    printf '%s\n\n> ' "$(tui_fit "$1" "$TUI_COLS")"
+    if [ "$2" = silent ]; then
+        stty icanon -echo 2>/dev/null
+    else
+        stty icanon echo 2>/dev/null
+    fi
+    IFS= read -r TUI_ANSWER
+    stty -icanon -echo min 0 time 1 2>/dev/null
+    printf '\n'
+    [ -n "$TUI_ANSWER" ]
+}
+
+tui_count() {
+    TUI_TOTAL=$(wc -l < "$TUI_LIST" 2>/dev/null | tr -d ' ')
+    case "$TUI_TOTAL" in ''|*[!0-9]*) TUI_TOTAL=0 ;; esac
+    [ "$TUI_SEL" -lt "$TUI_TOTAL" ] || TUI_SEL=$((TUI_TOTAL - 1))
+    [ "$TUI_SEL" -ge 0 ] || TUI_SEL=0
+}
+
+tui_selected() {
+    # sets TUI_S_SSID / TUI_S_SEC / TUI_S_SIG / TUI_S_BSSID
+    TUI_S_SSID=; TUI_S_SEC=; TUI_S_SIG=; TUI_S_BSSID=
+    [ "$TUI_TOTAL" -gt 0 ] || return 1
+    _tui_line=$(sed -n "$((TUI_SEL + 1))p" "$TUI_LIST" 2>/dev/null)
+    [ -n "$_tui_line" ] || return 1
+    IFS="$TUI_TAB" read -r TUI_S_SSID TUI_S_SEC TUI_S_SIG TUI_S_BSSID <<EOF
+$_tui_line
+EOF
+    [ -n "$TUI_S_SSID" ]
+}
+
+tui_scan_now() {
+    TUI_MSG="scanning, this takes about 6 s ..."
+    tui_draw
+    if ! take_lock; then
+        TUI_MSG="another foxwifi operation is running, try again"
+        return 0
+    fi
+    : > "$TUI_LIST"
+    scan_raw 2>/dev/null | awk -F'\t' '
+        NF >= 5 && $5 != "" && !seen[$5]++ {
+            sec = "OPEN"
+            if ($4 ~ /SAE/) sec = "WPA3"
+            else if ($4 ~ /WPA2/ || $4 ~ /RSN/) sec = "WPA2"
+            else if ($4 ~ /WPA/) sec = "WPA"
+            printf "%s\t%s\t%s\t%s\n", $5, sec, $3, $1
+        }' | sort -t "$TUI_TAB" -k3,3n -r >> "$TUI_LIST"
+    drop_lock
+    tui_count
+    TUI_MSG="found $TUI_TOTAL networks"
+    [ "$TUI_TOTAL" -gt 0 ] || TUI_MSG="no networks found - press o to start WiFi, then s"
+}
+
+tui_connect_net() {
+    # $1 = SSID, $2 = security, $3 = psk
+    if ! take_lock; then
+        TUI_MSG="another foxwifi operation is running, try again"
+        return 0
+    fi
+    if connect_network "$1" "$3" "$2" >>"$LOG" 2>&1; then
+        TUI_MSG="connected to \"$1\" - ip $(get_ip)"
+    else
+        TUI_MSG="could not connect to \"$1\" - see foxwifi log"
+    fi
+    drop_lock
+    tui_count
+}
+
+tui_connect_sel() {
+    tui_selected || { TUI_MSG="select a network first (press s to scan)"; return 0; }
+    if [ "$TUI_S_SEC" = OPEN ]; then
+        TUI_MSG="connecting to \"$TUI_S_SSID\" ..."
+        tui_draw
+        tui_connect_net "$TUI_S_SSID" OPEN ""
+        return 0
+    fi
+    tui_prompt "Password for \"$TUI_S_SSID\" ($TUI_S_SEC):" silent
+    _tui_psk=$TUI_ANSWER
+    [ -n "$_tui_psk" ] || { TUI_MSG="cancelled"; return 0; }
+    TUI_MSG="connecting to \"$TUI_S_SSID\" (up to 30 s) ..."
+    tui_draw
+    tui_connect_net "$TUI_S_SSID" "$TUI_S_SEC" "$_tui_psk"
+}
+
+tui_manual() {
+    tui_prompt "SSID (hidden network name):"
+    _tui_ssid=$TUI_ANSWER
+    [ -n "$_tui_ssid" ] || { TUI_MSG="cancelled"; return 0; }
+    tui_prompt "Password for \"$_tui_ssid\" (empty = open network):" silent
+    _tui_psk=$TUI_ANSWER
+    _tui_sec=WPA2
+    [ -n "$_tui_psk" ] || _tui_sec=OPEN
+    TUI_MSG="connecting to \"$_tui_ssid\" (up to 30 s) ..."
+    tui_draw
+    tui_connect_net "$_tui_ssid" "$_tui_sec" "$_tui_psk"
+}
+
+tui_power() {
+    # $1 = on|off
+    if ! take_lock; then
+        TUI_MSG="another foxwifi operation is running, try again"
+        return 0
+    fi
+    if [ "$1" = on ]; then
+        TUI_MSG="starting WiFi ..."
+        tui_draw
+        if wifi_up >/dev/null 2>&1; then TUI_MSG="WiFi is up"; else TUI_MSG="WiFi bring-up failed - see foxwifi log"; fi
+    else
+        TUI_MSG="stopping WiFi ..."
+        tui_draw
+        set_desired down
+        wifi_down >/dev/null 2>&1
+        TUI_MSG="WiFi is off"
+    fi
+    drop_lock
+}
+
+tui_ping_test() {
+    TUI_MSG="pinging gateway and 1.1.1.1 ..."
+    tui_draw
+    _tui_pg=$(cmd_ping 2>/dev/null | tr '\n' ' ')
+    TUI_MSG=$(tui_fit "${_tui_pg:-ping failed}" $((TUI_COLS - 2)))
+}
+
+tui_cleanup() {
+    [ -n "$TUI_STTY" ] && stty "$TUI_STTY" 2>/dev/null
+    printf '\033[0m\033[?25h\n'
+}
+
+cmd_tui() {
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        fail "foxwifi tui needs a terminal; run it from 'adb shell' or a console"
+        return 1
+    fi
+    if ! have stty; then
+        fail "foxwifi tui needs stty"
+        return 1
+    fi
+    if have dd; then
+        TUI_DD=dd
+    elif [ -n "$BB" ]; then
+        TUI_DD="$BB dd"
+    else
+        fail "foxwifi tui needs dd (busybox or toybox)"
+        return 1
+    fi
+    TUI_STTY=$(stty -g 2>/dev/null) || TUI_STTY=
+    stty -icanon -echo min 0 time 1 2>/dev/null
+    printf '\033[?25l'
+    trap 'tui_cleanup' EXIT
+    trap 'tui_cleanup; exit 0' INT TERM HUP
+
+    # The list is loaded from the last scan; if there is none, scan once so
+    # the screen is not empty on start.
+    if [ -s "$TUI_LIST" ]; then
+        tui_count
+        TUI_MSG="press s to rescan"
+    else
+        TUI_MSG=""
+        : > "$TUI_LIST"
+        TUI_TOTAL=0
+    fi
+
+    while :; do
+        tui_draw
+        tui_readkey
+        case "$TUI_KEY" in
+            up)   [ "$TUI_SEL" -gt 0 ] && TUI_SEL=$((TUI_SEL - 1)) ;;
+            down) [ "$TUI_SEL" -lt $((TUI_TOTAL - 1)) ] && TUI_SEL=$((TUI_SEL + 1)) ;;
+            scan) tui_scan_now ;;
+            enter) tui_connect_sel ;;
+            manual) tui_manual ;;
+            on)   tui_power on ;;
+            off)  tui_power off ;;
+            disconnect)
+                if take_lock; then
+                    disconnect_network >/dev/null 2>&1
+                    drop_lock
+                    TUI_MSG="disconnected"
+                else
+                    TUI_MSG="another foxwifi operation is running, try again"
+                fi
+                ;;
+            ping) tui_ping_test ;;
+            quit) break ;;
+            *)    : ;;
+        esac
+    done
+
+    tui_cleanup
+    trap - EXIT INT TERM HUP
+    return 0
+}
+
 usage() {
     cat <<EOF
 Usage: foxwifi <command> [args]
 
   on | off | restart        Start/stop WMT + wpa_supplicant
+  tui                       Full-screen network picker (needs a terminal)
   status [--json]           Show link state
   scan [--json]             Scan for networks
   connect SSID [PSK] [OPEN|WPA|WPA2|WPA3]
@@ -1109,6 +1467,10 @@ case "$1" in
         ;;
     status)
         if [ "$2" = "--json" ] || [ "$2" = "json" ]; then cmd_status_json; else cmd_status; fi
+        ;;
+    tui|menu)
+        cmd_tui
+        exit $?
         ;;
     ping)
         shift

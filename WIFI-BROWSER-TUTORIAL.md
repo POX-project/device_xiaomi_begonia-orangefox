@@ -126,6 +126,51 @@ already tries `foxwifi time` automatically after DHCP and is a no-op once the
 year is 2024 or later.
 
 
+## Part 1a — Pick a network with the terminal UI
+
+Instead of typing `scan`/`connect` by hand, `foxwifi tui` draws a full-screen
+list of the visible networks with signal bars, security type and the current
+link state:
+
+```sh
+foxwifi tui
+```
+
+```
+ foxwifi - WiFi networks
+ wlan0  COMPLETED  ssid "MyNetwork"  ip 192.168.1.23  dns 192.168.1.1
+--------------------------------------------------------------------------------
+   SSID                          SEC   SIG   dBm
+>  MyNetwork                     WPA2  [####] -52
+   Cafe-Guest                    OPEN  [##  ] -71
+   Neighbour-5G                  WPA3  [#   ] -83
+--------------------------------------------------------------------------------
+ up/down move   enter connect   s scan   d disconnect
+ o on   x off   m manual SSID   p ping test   q quit
+ found 3 networks
+```
+
+| key | action |
+|---|---|
+| `up` / `down` (or `k` / `j`) | move the selection |
+| `enter` | connect: prompts for the password on WPA/WPA2/WPA3, connects directly on an open network |
+| `s` | scan (about 6 seconds, needs WiFi up) |
+| `d` | disconnect |
+| `o` / `x` | bring the WiFi stack up / take it down |
+| `m` | enter a hidden SSID and password manually; empty password means open |
+| `p` | ping test: gateway and `1.1.1.1` |
+| `q` | quit (the terminal is restored) |
+
+Passwords are typed with echo off. The UI keeps the previous scan in
+`/tmp/foxwifi/tui.list`, so it opens without waiting for a scan; press `s` to
+refresh. It is plain shell and only uses `stty`, `dd` and the usual BusyBox
+applets, so it adds nothing to the ramdisk.
+
+> **Note:** the OrangeFox GUI terminal only *displays* output, it cannot send
+> keystrokes, so run the TUI from `adb shell` or a serial console. On the phone
+> itself use the FoxWeb dashboard below, which is driven with the on-screen
+> keyboard.
+
 ## Part 1b — Browse the web on the phone
 
 The recovery also ships **FoxBrowse**, a full-screen Links2 browser that renders
@@ -336,6 +381,7 @@ The build did not include the static BusyBox. Rebuild from the `wifi-browser` br
 ```sh
 # WiFi
 foxwifi on
+foxwifi tui
 foxwifi scan
 foxwifi connect "SSID" "PASSWORD" WPA2
 foxwifi status

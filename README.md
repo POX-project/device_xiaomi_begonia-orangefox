@@ -211,6 +211,7 @@ In the recovery terminal:
 
 ```sh
 foxwifi on                 # load WMT firmware and start wpa_supplicant
+foxwifi tui                # full-screen picker (adb shell / serial console)
 foxwifi scan               # list nearby networks
 foxwifi connect "MyNet" "password" WPA2
 foxwifi status             # state, IP and MAC
