@@ -1391,10 +1391,22 @@ cmd_tui() {
         TUI_TOTAL=0
     fi
 
+    # Redraw on input, and once every ~5 s while idle.  wpa_cli is forked for
+    # the header, so a redraw is not free and must not run on every tick.
+    tui_draw
+    _tui_idle=0
     while :; do
-        tui_draw
         tui_readkey
+        _tui_redraw=1
         case "$TUI_KEY" in
+            idle)
+                _tui_idle=$((_tui_idle + 1))
+                if [ "$_tui_idle" -ge 50 ]; then
+                    _tui_idle=0
+                else
+                    _tui_redraw=0
+                fi
+                ;;
             up)   [ "$TUI_SEL" -gt 0 ] && TUI_SEL=$((TUI_SEL - 1)) ;;
             down) [ "$TUI_SEL" -lt $((TUI_TOTAL - 1)) ] && TUI_SEL=$((TUI_SEL + 1)) ;;
             scan) tui_scan_now ;;
@@ -1415,6 +1427,7 @@ cmd_tui() {
             quit) break ;;
             *)    : ;;
         esac
+        [ "$_tui_redraw" = 1 ] && tui_draw
     done
 
     tui_cleanup
