@@ -156,8 +156,11 @@ TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/recovery/root/system/etc/recovery.fstab
 TARGET_USE_CUSTOM_LUN_FILE_PATH := /config/usb_gadget/g1/functions/mass_storage.0/lun.%d/file
 RECOVERY_SDCARD_ON_DATA := true
 TW_THEME := portrait_hdpi
-TW_Y_OFFSET := 80
-TW_H_OFFSET := -80
+# Keep the OrangeFox status bar in the notch area.  The old 80 px Y offset
+# pushed the whole UI (and the status bar) below the waterdrop cutout,
+# leaving a large empty band above the status bar.
+TW_Y_OFFSET := 0
+TW_H_OFFSET := 0
 TW_EXTRA_LANGUAGES := true
 TW_SCREEN_BLANK_ON_BOOT := true
 TW_INPUT_BLACKLIST := "hbtp_vm"
