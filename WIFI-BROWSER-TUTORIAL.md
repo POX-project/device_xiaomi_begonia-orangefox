@@ -145,16 +145,20 @@ Controls:
 - **Tap** a link to follow it.
 - **Swipe up/down** to scroll.
 - **Volume up/down** = page up/down.
+- **Hold Volume Up** for about 0.7 s = show or hide the on-screen keyboard.
 - **Power** = quit and return to the OrangeFox GUI.
+
+The on-screen keyboard has a QWERTY layer and a symbols/digits layer. Tap
+**URL** to open Links2's address prompt, or tap a form field first and then
+open the keyboard to type into it. Tap **Hide** (or anywhere above the
+keyboard) to close it. While the keyboard is visible it grabs the touchscreen,
+so key taps cannot click links hidden underneath.
 
 While the browser runs, OrangeFox's GUI is paused (`SIGSTOP`) because both it
 and Links2 need `/dev/graphics/fb0` and the touchscreen. The shell that launched
 the browser is a separate process and keeps running; quitting the browser
-resumes the GUI.
-
-There is intentionally **no on-screen keyboard**. To open a new address, quit
-the browser and run `foxbrowse <url>` again, or edit the bookmarks in
-`/system/etc/foxbrowse/etc/start.html`.
+resumes the GUI. `foxbrowse` launches Links2 through `foxkbd`, which gives the
+browser a private pty for keyboard input.
 
 ## Part 2 — Open the FoxWeb dashboard
 
