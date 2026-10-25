@@ -1,6 +1,14 @@
 Device configuration for Redmi Note 8 Pro (begonia)
 ===================================================
 
+<p align="center">
+  <img src="https://avatars.githubusercontent.com/u/328056449?v=4" width="80" height="80" alt="Builder" style="border-radius: 50%;">
+</p>
+
+<p align="center">
+  <strong>Builder & Maintainer:</strong> <a href="https://github.com/${ghuser}">${ghuser}</a>
+</p>
+
 The Redmi Note 8 Pro (codenamed _"begonia"_) is a high-end, mid-range smartphone from Xiaomi.
 It was released in September 2019.
 
