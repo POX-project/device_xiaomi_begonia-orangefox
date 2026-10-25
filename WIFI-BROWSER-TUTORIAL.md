@@ -173,9 +173,10 @@ applets, so it adds nothing to the ramdisk.
 
 ## Part 1b — Browse the web on the phone
 
-The recovery also ships **FoxBrowse**, a full-screen Links2 browser that renders
-pages on the phone itself (images included). It needs a working network and a
-correct clock; if HTTPS fails with a certificate error, run `foxwifi time` once.
+The recovery also ships **FoxBrowse**, a full-screen NetSurf browser that renders
+pages on the phone itself (images and JavaScript included). It needs a working
+network and a correct clock; if HTTPS fails with a certificate error, run
+`foxwifi time` once.
 
 From the recovery terminal:
 
@@ -190,20 +191,15 @@ Controls:
 - **Tap** a link to follow it.
 - **Swipe up/down** to scroll.
 - **Volume up/down** = page up/down.
-- **Hold Volume Up** for about 0.7 s = show or hide the on-screen keyboard.
 - **Power** = quit and return to the OrangeFox GUI.
 
-The on-screen keyboard has a QWERTY layer and a symbols/digits layer. Tap
-**URL** to open Links2's address prompt, or tap a form field first and then
-open the keyboard to type into it. Tap **Hide** (or anywhere above the
-keyboard) to close it. While the keyboard is visible it grabs the touchscreen,
-so key taps cannot click links hidden underneath.
+NetSurf has a built-in on-screen keyboard. Tap the **URL bar** or a page form
+field to show it; tap **Hide** (or the keyboard icon) to close it.
 
-While the browser runs, OrangeFox's GUI is paused (`SIGSTOP`) because both it
-and Links2 need `/dev/graphics/fb0` and the touchscreen. The shell that launched
+While the browser runs, OrangeFox's GUI is paused (`SIGSTOP`) because it and
+NetSurf share `/dev/graphics/fb0` and the touchscreen. The shell that launched
 the browser is a separate process and keeps running; quitting the browser
-resumes the GUI. `foxbrowse` launches Links2 through `foxkbd`, which gives the
-browser a private pty for keyboard input.
+resumes the GUI.
 
 ## Part 2 — Open the FoxWeb dashboard
 
