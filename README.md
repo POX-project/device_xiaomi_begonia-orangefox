@@ -171,20 +171,28 @@ wireless ADB, USB fallback, security notes and troubleshooting.
     reads `/etc/resolv.conf` directly.  `/system/bin/curl` is a wrapper that
     also pins `CURL_CA_BUNDLE` to the Mozilla bundle at
     `/system/etc/security/cacert.pem`.
-  - `foxbrowse`, a full-screen **Links2** browser.  It draws directly to
+  - `foxbrowse`, a full-screen **NetSurf** browser (static AArch64, Duktape
+    JavaScript, built-in on-screen keyboard).  It draws directly to
     `/dev/graphics/fb0` and reads the touchscreen and hardware keys from
-    `/dev/input`, so it can render real pages instead of Lynx's text output.
-    OrangeFox's GUI is stopped with `SIGSTOP` while the browser owns the
-    framebuffer and resumed on exit.  Launch it from the recovery terminal:
+    `/dev/input`.  OrangeFox's GUI is stopped with `SIGSTOP` while the browser
+    owns the framebuffer and resumed on exit.  Launch it from the recovery
+    terminal:
 
     ```sh
     foxbrowse                      # local start page/bookmarks
     foxbrowse https://example.com
+    foxbrowse --diag               # framebuffer/input/resource state
+    foxbrowse --selftest           # headless 3 s smoke test
     ```
 
     Tap to click, swipe up/down to scroll, volume up/down for page up/down and
-    power to quit.  There is no on-screen keyboard: addresses are passed on the
-    command line or reached through links and bookmarks.
+    power to quit.  Tap the URL bar or a form field for the on-screen keyboard.
+
+    The launcher passes the geometry the kernel reports
+    (`/sys/class/graphics/fb0`) to NetSurf, points `NETSURFRES` at the shipped
+    resource directory and keeps a writable `HOME` under `/tmp`.  If NetSurf
+    exits non-zero, the reason is written to `/tmp/foxbrowse.log` and appended
+    to `/tmp/recovery.log` (Advanced -> View log).
 
   - `/etc/resolv.conf` (public fallback, rewritten from the DHCP lease),
     `/etc/hosts`, and `foxwifi dns` / `foxwifi time` diagnostics.

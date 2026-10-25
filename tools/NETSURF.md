@@ -11,7 +11,10 @@ bundled Duktape JavaScript engine), not built by the OrangeFox build itself.
 | JS engine | Duktape (bundled in NetSurf) |
 | verified by | `.github/workflows/build.yml` (AArch64 + static link) |
 
-Rebuild with `tools/build-netsurf.sh` (requires the musl toolchain and the
-NetSurf dependency prefix), then copy the resulting `nsfb` to
-`recovery/root/system/etc/foxbrowse/bin/netsurf-fb`, strip it, and update this
-file.
+Rebuild recipe: there is no build script in this tree.  The binary is a
+musl cross build of NetSurf 3.11 configured for the framebuffer frontend
+(`--enable-framebuffer --enable-js`, libnsfb with the `linux` and `ram`
+surfaces), stripped.  It is committed as a prebuilt because the recovery
+build cannot ship the NetSurf dependency stack (libcss, libdom, libhubbub,
+libnsfb, duktape, ...).  `tools/build-links.sh` and `tools/build-foxnet.sh`
+are the equivalent recipes for the older Links2 payload and for curl.

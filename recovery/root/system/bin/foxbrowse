@@ -11,6 +11,8 @@
 # Usage:
 #   foxbrowse                 open the local start page
 #   foxbrowse URL             open a URL (https:// is assumed for bare hosts)
+#   foxbrowse --diag          print framebuffer/input/resource state
+#   foxbrowse --selftest      start NetSurf headless for 3 s (no framebuffer)
 #
 # Touch: tap = click, vertical swipe = scroll.
 # The on-screen keyboard is built into the browser: tap the URL bar or a form
@@ -19,14 +21,124 @@
 
 D=/system/etc/foxbrowse
 B=$D/bin/netsurf-fb
+LOG=/tmp/foxbrowse.log
+RLOG=/tmp/recovery.log
+NETSURF_HOME=/tmp/foxbrowse-home
+
+# Report on stderr, in our own log, in OrangeFox's log (Advanced -> View log)
+# and in the kernel log.  A failure used to vanish into a pty that is hidden
+# while the recovery GUI is stopped, so the browser looked like it crashed
+# without leaving any trace.
+report() {
+    echo "foxbrowse: $*" >&2
+    echo "foxbrowse: $*" >>"$LOG" 2>/dev/null
+    echo "foxbrowse: $*" >>"$RLOG" 2>/dev/null
+    echo "foxbrowse: $*" >/dev/kmsg 2>/dev/null
+}
+
+isnum() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -gt 0 ]
+}
+
+# --- framebuffer / input discovery -----------------------------------------
+FBDEV=${FOX_FB_DEV:-}
+if [ -z "$FBDEV" ]; then
+    for c in /dev/graphics/fb0 /dev/fb0; do
+        if [ -e "$c" ]; then
+            FBDEV=$c
+            break
+        fi
+    done
+fi
+
+FBSYS=${FOX_FB_SYS:-/sys/class/graphics/fb0}
+FBW=$(cut -d, -f1 "$FBSYS/virtual_size" 2>/dev/null)
+FBH=$(cut -d, -f2 "$FBSYS/virtual_size" 2>/dev/null)
+FBBPP=$(cat "$FBSYS/bits_per_pixel" 2>/dev/null)
+isnum "$FBW" || FBW=
+isnum "$FBH" || FBH=
+isnum "$FBBPP" || FBBPP=
+
+dialog() {
+    echo "$*"
+    echo "$*" >>"$RLOG" 2>/dev/null
+}
+
+diag() {
+    echo "foxbrowse diagnostics"
+    echo "  payload      : $B"
+    if [ -x "$B" ]; then
+        echo "  payload mode : executable"
+    elif [ -e "$B" ]; then
+        echo "  payload mode : NOT executable (needs chmod 0755)"
+    else
+        echo "  payload mode : missing"
+    fi
+    echo "  framebuffer  : ${FBDEV:-none}"
+    echo "  geometry     : ${FBW:-?}x${FBH:-?} ${FBBPP:-?}bpp (from $FBSYS)"
+    echo "  fb sysfs     : $(ls /sys/class/graphics 2>/dev/null | tr '\n' ' ')"
+    echo "  input nodes  : $(ls /dev/input 2>/dev/null | tr '\n' ' ')"
+    echo "  resources    : $D/netsurf ($(ls "$D/netsurf" 2>/dev/null | wc -l) files)"
+    echo "  fonts        : $(ls "$D/fonts" 2>/dev/null | wc -l) files"
+    echo "  fontconfig   : $D/etc/fonts.conf"
+    ca=/system/etc/security/cacert.pem
+    if [ -e "$ca" ]; then
+        echo "  CA bundle    : $ca ($(wc -c <"$ca") bytes)"
+    else
+        echo "  CA bundle    : MISSING ($ca)"
+    fi
+    echo "  recovery pid : $(pidof recovery 2>/dev/null)"
+}
+
+# --- early modes (never touch the GUI) -------------------------------------
+case "$1" in
+    -h|--help)
+        sed -n '2,25p' "$0" 2>/dev/null || true
+        exit 0
+        ;;
+    --diag)
+        diag
+        exit 0
+        ;;
+    --selftest)
+        : >"$LOG"
+        echo "foxbrowse: starting headless NetSurf (ram surface) for 3 s"
+        "$B" -f ram -w 1080 -h 2340 "file://$D/etc/start.html" >>"$LOG" 2>&1 &
+        pid=$!
+        sleep 3
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            echo "foxbrowse: selftest PASS (browser stayed up)"
+            exit 0
+        fi
+        wait "$pid" 2>/dev/null
+        rc=$?
+        echo "foxbrowse: selftest FAIL (browser exited before 3 s with status $rc)"
+        tail -n 20 "$LOG" 2>/dev/null
+        exit 1
+        ;;
+esac
 
 # fs_config assigns 0644 to files under /system/etc; restore the exec bit.
 if [ ! -x "$B" ]; then
     chmod 0755 "$B" 2>/dev/null
 fi
 if [ ! -x "$B" ]; then
-    echo "foxbrowse: browser payload missing ($B)" >&2
+    if [ -e "$B" ]; then
+        report "browser payload is not executable and chmod failed ($B)"
+    else
+        report "browser payload missing ($B)"
+    fi
     exit 127
+fi
+
+if [ -z "$FBDEV" ]; then
+    report "no framebuffer device (/dev/graphics/fb0, /dev/fb0); run 'foxbrowse --diag'"
+    exit 3
 fi
 
 URL=$1
@@ -42,13 +154,37 @@ esac
 # bundle the recovery actually ships.
 [ -n "$SSL_CERT_FILE" ] || export SSL_CERT_FILE=/system/etc/security/cacert.pem
 [ -n "$FONTCONFIG_FILE" ] || export FONTCONFIG_FILE=$D/etc/fonts.conf
-[ -n "$HOME" ] || export HOME=/tmp
 [ -n "$TMPDIR" ] || export TMPDIR=/tmp
+[ -n "$XDG_CACHE_HOME" ] || export XDG_CACHE_HOME=/tmp
+
+# netSurf's compiled-in resource path is the build tree
+# (/tmp/opencode/ns-install/share/netsurf), which does not exist on the device.
+# Without this it finds no Messages, no default.css and no Choices, so pages
+# render as unstyled text and every load logs a translation warning.
+export NETSURFRES=$D/netsurf
+
+# NetSurf needs a writable home for Choices and its cache.  /system is inside
+# the ramdisk and may be read-only, so never point HOME there.
+export HOME=$NETSURF_HOME
+mkdir -p "$HOME/.netsurf" 2>/dev/null
+
+# NetSurf asks the surface for the geometry.  Passing the values the kernel
+# actually reports removes a whole class of framebuffer-init failures (wrong
+# bpp, virtual height, panels that report 24bpp) that made the browser exit
+# immediately and look like a crash.
+set --
+if [ -n "$FBW" ] && [ -n "$FBH" ]; then
+    set -- -w "$FBW" -h "$FBH"
+    if [ -n "$FBBPP" ]; then
+        set -- "$@" -b "$FBBPP"
+    fi
+fi
+GEOM_ARGS=$*
 
 # TLS fails outright if the clock is still in 1970.  Only pay for a time sync
 # when the clock is obviously wrong and foxwifi is available.
 YEAR=$(date +%Y 2>/dev/null)
-if [ -n "$YEAR" ] && [ "$YEAR" -lt 2024 ] && [ -x /system/bin/foxwifi ]; then
+if [ -n "$YEAR" ] && [ "$YEAR" -lt 2024 ] 2>/dev/null && [ -x /system/bin/foxwifi ]; then
     /system/bin/foxwifi time >/dev/null 2>&1
 fi
 
@@ -66,14 +202,38 @@ for p in $RPIDS; do
 done
 sleep 0.2
 
-LOG=/tmp/foxbrowse.log
-"$B" -f linux "$URL" >"$LOG" 2>&1
+: >"$LOG"
+
+run_browser() {
+    # shellcheck disable=SC2086
+    "$B" -f linux $GEOM_ARGS "$URL" >>"$LOG" 2>&1
+}
+
+run_browser
 RC=$?
+
+# A framebuffer-init failure is instant and deterministic: retry once without
+# the explicit geometry, in case this panel rejects the reported values.
+if [ "$RC" -ne 0 ] && [ -n "$GEOM_ARGS" ]; then
+    report "browser exited with status $RC using geometry '$GEOM_ARGS'; retrying with auto-detection"
+    run_browser_noargs() {
+        "$B" -f linux "$URL" >>"$LOG" 2>&1
+    }
+    run_browser_noargs
+    RC=$?
+fi
 
 resume_gui
 trap - EXIT INT TERM HUP
-if [ $RC -ne 0 ]; then
-    echo "foxbrowse: browser exited with status $RC" >&2
-    [ -s "$LOG" ] && tail -20 "$LOG" >&2
+
+if [ "$RC" -ne 0 ]; then
+    report "browser exited with status $RC"
+    if [ -s "$LOG" ]; then
+        grep -v '^foxbrowse:' "$LOG" 2>/dev/null | tail -n 20 | while IFS= read -r line; do
+            report "  $line"
+        done
+    fi
+    report "full log: $LOG (Advanced -> View log in recovery)"
+    exit "$RC"
 fi
-exit $RC
+exit 0
