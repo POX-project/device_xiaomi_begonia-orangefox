@@ -1,0 +1,9 @@
+# NetSurf framebuffer options for OrangeFox recovery (begonia)
+fb_osk:1
+fb_toolbar_size:72
+fb_furniture_size:48
+fb_depth:32
+window_width:0
+window_height:0
+core_select_menu:1
+homepage_url:file:///system/etc/foxbrowse/etc/start.html

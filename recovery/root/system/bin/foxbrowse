@@ -2,7 +2,7 @@
 #
 # foxbrowse - full-screen graphical browser for OrangeFox recovery (begonia).
 #
-# Links2 draws directly to /dev/graphics/fb0 and reads the touchscreen and
+# NetSurf draws directly to /dev/graphics/fb0 and reads the touchscreen and
 # hardware keys from /dev/input.  OrangeFox's GUI also owns that framebuffer
 # and consumes the same input, so freeze it with SIGSTOP for the duration of
 # the browser and resume it on exit.  The shell that launched us is a separate
@@ -13,17 +13,12 @@
 #   foxbrowse URL             open a URL (https:// is assumed for bare hosts)
 #
 # Touch: tap = click, vertical swipe = scroll.
+# The on-screen keyboard is built into the browser: tap the URL bar or a form
+# field to show it, tap Hide (or the keyboard icon) to dismiss it.
 # Keys:  volume up/down = page up/down, power = quit.
-#        hold volume up for ~0.7 s = show/hide the on-screen keyboard.
-#
-# While the keyboard is visible it grabs the touchscreen, so taps on keys do
-# not leak through to the page.  Tap Hide (or anywhere above the keyboard) to
-# dismiss it.  Links2 is launched through foxkbd, which owns a pty so the
-# keyboard can type ordinary terminal input into the browser.
 
 D=/system/etc/foxbrowse
-B=$D/bin/links
-K=/system/bin/foxkbd
+B=$D/bin/netsurf-fb
 
 # fs_config assigns 0644 to files under /system/etc; restore the exec bit.
 if [ ! -x "$B" ]; then
@@ -32,10 +27,6 @@ fi
 if [ ! -x "$B" ]; then
     echo "foxbrowse: browser payload missing ($B)" >&2
     exit 127
-fi
-# fs_config assigns 0644 to files under /system/etc; restore the exec bit.
-if [ -e "$K" ] && [ ! -x "$K" ]; then
-    chmod 0755 "$K" 2>/dev/null
 fi
 
 URL=$1
@@ -75,35 +66,8 @@ for p in $RPIDS; do
 done
 sleep 0.2
 
-# The recovery GUI owns the pty and is stopped while we run, so never let the
-# browser fill the pty with diagnostics.  foxkbd starts Links2 on a private
-# pty; if the helper is absent (for example an older ramdisk), fall back to
-# running the browser directly so browsing still works.
 LOG=/tmp/foxbrowse.log
-run_browser() {
-    if [ -x "$K" ]; then
-        "$K" "$B" -g -driver fb \
-            -font /twres/fonts/Roboto-Regular.ttf \
-            -font-bold /twres/fonts/Roboto-Medium.ttf \
-            -font-monospaced /twres/fonts/FiraCode-Regular.ttf \
-            -font-monospaced-bold /twres/fonts/FiraCode-Medium.ttf \
-            -html-user-font-size 26 \
-            -menu-font-size 22 \
-            -download-dir /tmp \
-            "$URL"
-    else
-        "$B" -g -driver fb \
-            -font /twres/fonts/Roboto-Regular.ttf \
-            -font-bold /twres/fonts/Roboto-Medium.ttf \
-            -font-monospaced /twres/fonts/FiraCode-Regular.ttf \
-            -font-monospaced-bold /twres/fonts/FiraCode-Medium.ttf \
-            -html-user-font-size 26 \
-            -menu-font-size 22 \
-            -download-dir /tmp \
-            "$URL"
-    fi
-}
-run_browser >"$LOG" 2>&1
+"$B" -f linux "$URL" >"$LOG" 2>&1
 RC=$?
 
 resume_gui
