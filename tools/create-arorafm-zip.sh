@@ -50,10 +50,16 @@ META-INF/com/google/android/update-binary
 META-INF/com/google/android/updater-script
 recovery.img
 "
+# List the archive once, to a file.  Piping unzip into "grep -q" is unsafe
+# under "set -o pipefail": grep exits at the first match, unzip dies of
+# SIGPIPE and the pipeline reports 141 even though the entry was found.
+entries=$(mktemp)
+unzip -Z1 "$OFFICIAL_ZIP" >"$entries" || die "cannot list $OFFICIAL_ZIP"
 for entry in $REQUIRED_ENTRIES; do
-    unzip -Z1 "$OFFICIAL_ZIP" | grep -qx "$entry" \
+    grep -qx "$entry" "$entries" \
         || die "official ZIP is missing $entry: $OFFICIAL_ZIP"
 done
+rm -f "$entries"
 
 # --- validate the NetSurf payload ------------------------------------------
 PAYLOAD="$DEVICE_DIR/recovery/root/system/etc/foxbrowse"
@@ -139,9 +145,11 @@ top_entries=$(cd "$stage" && ls -A)
 ( cd "$stage" && zip -q -r -X "$unsigned" $top_entries )
 
 unzip -tq "$unsigned" >/dev/null || die "rebuilt ZIP failed the integrity check"
+entries="$work/unsigned-entries.txt"
+unzip -Z1 "$unsigned" >"$entries" || die "cannot list $unsigned"
 for entry in recovery.img sdcard/Fox/FoxFiles/NetSurf/bin/netsurf-fb \
              sdcard/Fox/FoxFiles/NetSurf/README.txt; do
-    unzip -Z1 "$unsigned" | grep -qx "$entry" \
+    grep -qx "$entry" "$entries" \
         || die "rebuilt ZIP is missing $entry"
 done
 
