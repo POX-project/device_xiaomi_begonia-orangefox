@@ -49,13 +49,14 @@ mkdir -p OrangeFox/sdcard/Fox/FoxFiles
 mkdir -p OrangeFox/docs
 
 # Copy recovery image (from the build output)
-RECOVERY_IMG="$SRC_DIR/aosp/out/target/product/begonia/recovery/recovery.img"
+# When running from device tree dir, recovery image is at ../../out/...
+RECOVERY_IMG="../../out/target/product/begonia/recovery/recovery.img"
 if [ ! -f "$RECOVERY_IMG" ]; then
     # Try alternative paths
-    if [ -f "$SRC_DIR/aosp/out/target/product/begonia/recovery.img" ]; then
-        RECOVERY_IMG="$SRC_DIR/aosp/out/target/product/begonia/recovery.img"
-    elif [ -f "$SRC_DIR/aosp/out/target/product/begonia/recovery/recovery.img" ]; then
-        RECOVERY_IMG="$SRC_DIR/aosp/out/target/product/begonia/recovery/recovery.img"
+    if [ -f "../../out/target/product/begonia/recovery.img" ]; then
+        RECOVERY_IMG="../../out/target/product/begonia/recovery.img"
+    elif [ -f "../../out/target/product/begonia/recovery/recovery.img" ]; then
+        RECOVERY_IMG="../../out/target/product/begonia/recovery/recovery.img"
     else
         log_error "Recovery image not found at: $RECOVERY_IMG"
         exit 1
