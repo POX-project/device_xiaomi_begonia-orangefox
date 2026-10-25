@@ -18,7 +18,7 @@ packages Conflict on Ubuntu 22.04.
 ## Rebuilding
 
 Edit `tools/foxkbd.c`, then run the `foxkbd build` workflow
-(`methylphetamine/orangefox-begonia-build`, `.github/workflows/foxkbd.yml`),
+(`${GHUSER}/orangefox-begonia-build`, `.github/workflows/foxkbd.yml`),
 which installs only the cross sysroot and uses clang:
 
 ```sh
