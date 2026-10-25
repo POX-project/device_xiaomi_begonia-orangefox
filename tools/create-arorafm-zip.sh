@@ -503,7 +503,7 @@ package_extract_all() {
 package_get_field() {
     case "$2" in
         "url")
-            echo "https://github.com/methylphetamine/orangefox-begonia-build"
+            echo "https://github.com/${GHUSER}/orangefox-begonia-build"
             ;;
         "versionCode")
             echo "2"

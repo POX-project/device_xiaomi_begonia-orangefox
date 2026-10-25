@@ -8,7 +8,7 @@ This guide covers the terminal commands, the dashboard, the file manager, the US
 
 ## Before you start
 
-- Boot a `wifi-browser` recovery image. The `orangefox-r12.0-begonia` release asset was built before the gzip-ramdisk fix, and its [release notes](https://github.com/methylphetamine/orangefox-begonia-build/releases/tag/orangefox-r12.0-begonia) warn that it black-screens on begonia. Check whether the asset has been replaced; if not, use the latest successful [OrangeFox build (begonia)](https://github.com/methylphetamine/orangefox-begonia-build/actions/workflows/build.yml) run on the `wifi-browser` branch (Actions → Artifacts) or build it yourself.
+- Boot a `wifi-browser` recovery image. The `orangefox-r12.0-begonia` release asset was built before the gzip-ramdisk fix, and its [release notes](https://github.com/${ghuser}/orangefox-begonia-build/releases/tag/orangefox-r12.0-begonia) warn that it black-screens on begonia. Check whether the asset has been replaced; if not, use the latest successful [OrangeFox build (begonia)](https://github.com/${ghuser}/orangefox-begonia-build/actions/workflows/build.yml) run on the `wifi-browser` branch (Actions → Artifacts) or build it yourself.
 - Have the WiFi SSID and password ready. 2.4 GHz and 5 GHz networks both work.
 - Put the phone and the browser device on the same network, or use the USB method below.
 - Open a shell: OrangeFox menu → **Terminal**, or `adb shell` from a computer. Commands run as root.
@@ -424,6 +424,6 @@ adb connect <phone-ip>:5555
 
 ## Source
 
-- [Device tree (wifi-browser branch)](https://github.com/methylphetamine/device_xiaomi_begonia-orangefox/tree/wifi-browser)
-- [CI builder](https://github.com/methylphetamine/orangefox-begonia-build/tree/wifi-browser)
-- [Usage notes and limits](https://github.com/methylphetamine/device_xiaomi_begonia-orangefox/blob/wifi-browser/README.md)
+- [Device tree (wifi-browser branch)](https://github.com/${ghuser}/device_xiaomi_begonia-orangefox/tree/wifi-browser)
+- [CI builder](https://github.com/${ghuser}/orangefox-begonia-build/tree/wifi-browser)
+- [Usage notes and limits](https://github.com/${ghuser}/device_xiaomi_begonia-orangefox/blob/wifi-browser/README.md)

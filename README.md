@@ -79,7 +79,7 @@ FOX_BUILD_DEVICE=begonia FOX_BUILD_TYPE=Unofficial mka recoveryimage -j$(nproc -
 
 `fox_begonia.mk` carries the OrangeFox UI, LZMA, magiskboot and partition
 tool settings. The CI builder lives at
-`methylphetamine/orangefox-begonia-build`.
+`${ghuser}/orangefox-begonia-build`.
 
 **Copyright (C) 2022 Team Win Recovery Project**
 
