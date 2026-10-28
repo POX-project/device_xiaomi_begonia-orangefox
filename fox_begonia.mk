@@ -40,11 +40,23 @@ OF_ENABLE_ALL_PARTITION_TOOLS := 1
 OF_USE_DMCTL := 1
 OF_QUICK_BACKUP_LIST := /boot;/data;
 OF_ENABLE_FRP_ADDON := 1
-# MT6360 exposes two torch LED class devices.  OrangeFox appends
-# /brightness and /max_brightness to these paths; the old value
-# (/system/etc/flashlight) was not a LED directory and made the toggle fail.
-OF_FL_PATH1 := /sys/class/leds/torch-light0
-OF_FL_PATH2 := /sys/class/leds/torch-light1
+# OrangeFox appends /brightness and /max_brightness to OF_FL_PATH1, so it must
+# be the torch LED *directory*, not a script.  The MT6360 driver registers
+# three classdevs: torch-light0 (CH1), torch-light1 (CH2) and torch-light2
+# (both channels).
+#
+# Only torch-light2 actually powers the LED: in this kernel's
+# flashlights-mt6360-mt6785.c the single-channel brightness_set
+# (torch-light0/1) calls flashlight_set_torch_brightness() and sets
+# mt6360_en_ch*, but leaves mt6360_enable() commented out, so the
+# channel is never put into TORCH mode.  torch2_brightness_set is the only
+# path that calls mt6360_enable(), so it is the only one that lights up.
+# begonia wires its flash LED to CH1; torch-light2 enables both channels
+# (CH2 is unwired, so the extra channel is harmless).
+#
+# Leave OF_FL_PATH2 unset: with both paths set, OrangeFox writes the
+# second one last, and the two channels disable each other.
+OF_FL_PATH1 := /sys/class/leds/torch-light2
 OF_DISABLE_OTA_MENU := 1
 OF_USE_LEGACY_BATTERY_SERVICES := 1
 OF_USE_GREEN_LED := 0
