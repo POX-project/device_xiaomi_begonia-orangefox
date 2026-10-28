@@ -1,0 +1,339 @@
+#!/system/bin/sh
+#
+# gofile - download files and folders from gofile.io inside OrangeFox.
+#
+# Works over the recovery's WiFi with the stock ramdisk tools only
+# (curl + sha256sum + awk). No root, no jq, no python.
+#
+# GoFile restricted /contents to premium accounts in March 2026. Free
+# downloads still work by creating a guest account and sending the
+# client-side "X-Website-Token" (wt) that gofile.io/js/wt.obf.js computes:
+#
+#   sha256("<UA>::<language>::<accountToken>::<4hWindow>::<salt>")
+#
+# The salt below is embedded in wt.obf.js. If GoFile rotates it, downloads
+# start failing with error-notPremium again; update SALT (or set
+# GOFILE_WT_SALT in the environment).
+#
+
+PATH=/sbin:/system/bin:/system/xbin:$PATH
+export PATH
+
+API="https://api.gofile.io"
+UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+BL="en-US"
+SALT="${GOFILE_WT_SALT:-12af056dacea0b}"
+WINDOW=14400
+
+TLS=""
+[ -f /system/etc/security/cacert.pem ] && TLS="--cacert /system/etc/security/cacert.pem"
+CURL="curl -sS --connect-timeout 20 $TLS"
+
+OUT="/sdcard/Download/gofile"
+PASS=""
+LISTONLY=0
+ID=""
+
+msg()  { printf '%s\n' "$*"; }
+warn() { printf 'gofile: %s\n' "$*" >&2; }
+die()  { warn "$*"; exit 1; }
+
+usage() {
+	cat <<'EOF'
+gofile - download files/folders from gofile.io
+
+usage: gofile [options] <link|code>
+
+  -o DIR    save under DIR (default: /sdcard/Download/gofile)
+  -p PASS   password for protected content
+  -l        list contents only, download nothing
+  -h        show this help
+
+examples:
+  gofile https://gofile.io/d/s02G0a44
+  gofile s02G0a44 -o /sdcard/Download
+  gofile -l https://gofile.io/d/s02G0a44
+
+Files are skipped when a complete copy already exists, so an interrupted
+download can simply be re-run.
+EOF
+}
+
+# --- JSON helpers ------------------------------------------------------------
+
+json_status() {
+	printf '%s' "$1" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p'
+}
+
+json_field() { # json key  (first scalar string value)
+	printf '%s' "$1" | sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p"
+}
+
+# --- GoFile API --------------------------------------------------------------
+
+new_token() {
+	$CURL --max-time 25 -X POST \
+		-H 'Content-Type: application/json' \
+		-H "User-Agent: $UA" \
+		-H 'Origin: https://gofile.io' \
+		-H 'Referer: https://gofile.io/' \
+		-d '{}' "$API/accounts" |
+	sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+}
+
+wt_for() { # token window_offset
+	printf '%s::%s::%s::%s::%s' \
+		"$UA" "$BL" "$1" "$(( $(date +%s) / WINDOW + $2 ))" "$SALT" |
+	sha256sum | cut -d' ' -f1
+}
+
+api_contents() { # id wt
+	_q="?contentFilter=&page=1&pageSize=1000&sortField=createTime&sortDirection=-1"
+	[ -n "$PASSHASH" ] && _q="$_q&password=$PASSHASH"
+	$CURL --max-time 60 \
+		-H "Authorization: Bearer $TOK" \
+		-H "X-Website-Token: $2" \
+		-H "X-BL: $BL" \
+		-H "User-Agent: $UA" \
+		-H 'Accept: */*' \
+		-H 'Origin: https://gofile.io' \
+		-H "Referer: https://gofile.io/d/$1" \
+		"$API/contents/$1$_q"
+}
+
+fetch_contents() { # id -> json
+	_try=0
+	while [ "$_try" -lt 3 ]; do
+		case $_try in
+			0) _off=0 ;;
+			1) _off=-1 ;;
+			*) _off=1 ;;
+		esac
+		_json=$(api_contents "$1" "$(wt_for "$TOK" "$_off")")
+		_st=$(json_status "$_json")
+		if [ "$_st" = "ok" ]; then
+			printf '%s' "$_json"
+			return 0
+		fi
+		_try=$((_try + 1))
+	done
+	LAST_STATUS="$_st"
+	return 1
+}
+
+# Emit one line per immediate child:
+#   F <link> <name> <size>
+#   D <id> <name>
+parse_children() {
+	awk '
+	function sval(s, k,   i, c, out, n) {
+		i = index(s, "\"" k "\":\"")
+		if (!i) return ""
+		i += length(k) + 4
+		out = ""; n = length(s)
+		while (i <= n) {
+			c = substr(s, i, 1)
+			if (c == "\\") { out = out c substr(s, i + 1, 1); i += 2; continue }
+			if (c == "\"") break
+			out = out c; i++
+		}
+		gsub(/\\\//, "/", out)
+		gsub(/\\"/, "\"", out)
+		gsub(/\\\\/, "\\", out)
+		return out
+	}
+	function nval(s, k,   i, t) {
+		i = index(s, "\"" k "\":")
+		if (!i) return ""
+		t = substr(s, i + length(k) + 3)
+		if (match(t, /^[0-9]+/)) return substr(t, 1, RLENGTH)
+		return ""
+	}
+	function emit(o,   t, id, nm, lk) {
+		t = sval(o, "type"); id = sval(o, "id"); nm = sval(o, "name")
+		if (t == "file") {
+			lk = sval(o, "link")
+			if (lk == "")
+				lk = "https://" sval(o, "serverSelected") ".gofile.io/download/web/" id "/" nm
+			printf "F\t%s\t%s\t%s\n", lk, nm, nval(o, "size")
+		} else if (t == "folder") {
+			printf "D\t%s\t%s\n", id, nm
+		}
+	}
+	# end index of the object starting at s[start] (brace matching, string aware)
+	function obj_end(s, start,   i, depth, c, instr, esc) {
+		depth = 0; instr = 0; esc = 0
+		for (i = start; i <= length(s); i++) {
+			c = substr(s, i, 1)
+			if (instr) {
+				if (esc) esc = 0
+				else if (c == "\\") esc = 1
+				else if (c == "\"") instr = 0
+				continue
+			}
+			if (c == "\"") { instr = 1; continue }
+			if (c == "{") depth++
+			else if (c == "}") { depth--; if (depth == 0) return i }
+		}
+		return 0
+	}
+	# substring of the "children":{...} block, or "" when there is none
+	function children_block(s,   i, start, e) {
+		i = index(s, "\"children\":{")
+		if (!i) return ""
+		start = i + length("\"children\":")
+		e = obj_end(s, start)
+		if (!e) return ""
+		return substr(s, start, e - start + 1)
+	}
+	{
+		s = $0
+		blk = children_block(s)
+		if (blk == "") {
+			i = index(s, "{\"canAccess\":")
+			if (i) {
+				e = obj_end(s, i)
+				if (e) emit(substr(s, i, e - i + 1))
+			}
+			next
+		}
+		pos = 1
+		while ((p = index(substr(blk, pos), "{\"canAccess\":")) > 0) {
+			start = pos + p - 1
+			e = obj_end(blk, start)
+			if (!e) break
+			emit(substr(blk, start, e - start + 1))
+			pos = e + 1
+		}
+	}'
+}
+
+# --- filesystem --------------------------------------------------------------
+
+safe_name() {
+	_n=$(printf '%s' "$1" | tr '/\\' '__' | tr -d '\r')
+	_n=$(printf '%s' "$_n" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+	case "$_n" in
+		''|.|..) _n="_" ;;
+	esac
+	printf '%s' "$_n"
+}
+
+human() { # bytes
+	if [ -z "$1" ]; then
+		printf '?'
+	elif [ "$1" -ge 1073741824 ] 2>/dev/null; then
+		printf '%s.%s GiB' "$(( $1 / 1073741824 ))" "$(( ($1 % 1073741824) * 10 / 1073741824 ))"
+	elif [ "$1" -ge 1048576 ] 2>/dev/null; then
+		printf '%s.%s MiB' "$(( $1 / 1048576 ))" "$(( ($1 % 1048576) * 10 / 1048576 ))"
+	elif [ "$1" -ge 1024 ] 2>/dev/null; then
+		printf '%s KiB' "$(( $1 / 1024 ))"
+	else
+		printf '%s B' "$1"
+	fi
+}
+
+get_file() { # link name size dir
+	_name=$(safe_name "$2")
+	_dest="$4/$_name"
+	if [ -f "$_dest" ] && [ -n "$3" ]; then
+		_have=$(wc -c < "$_dest" | tr -d ' ')
+		if [ "$_have" = "$3" ]; then
+			msg "  = $_name (already complete)"
+			return 0
+		fi
+	fi
+	msg "  + $_name ($(human "$3"))"
+	$CURL -L --fail --retry 2 --retry-delay 2 -C - --progress-bar \
+		-H "Authorization: Bearer $TOK" \
+		-H "User-Agent: $UA" \
+		-H 'Origin: https://gofile.io' \
+		-H 'Referer: https://gofile.io/' \
+		-o "$_dest" "$1" || { warn "failed: $_name"; return 1; }
+}
+
+walk_json() { # json dir
+	_json=$1
+	_dir=$2
+	printf '%s' "$_json" | parse_children | while IFS="$(printf '\t')" read -r _t _a _b _c; do
+		case "$_t" in
+			D)
+				_sub="$_dir/$(safe_name "$_b")"
+				msg "[dir] $_b"
+				mkdir -p "$_sub" 2>/dev/null
+				if _j=$(fetch_contents "$_a"); then
+					walk_json "$_j" "$_sub"
+				else
+					warn "cannot list folder '$_b' ($LAST_STATUS)"
+				fi
+				;;
+			F)
+				if [ "$LISTONLY" = "1" ]; then
+					msg "  - $_b ($(human "$_c"))"
+				else
+					get_file "$_a" "$_b" "$_c" "$_dir"
+				fi
+				;;
+		esac
+	done
+}
+
+# --- main --------------------------------------------------------------------
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-o)
+			[ -n "$2" ] || die "-o needs a directory"
+			OUT="$2"; shift 2 ;;
+		-p)
+			[ -n "$2" ] || die "-p needs a password"
+			PASS="$2"; shift 2 ;;
+		-l)
+			LISTONLY=1; shift ;;
+		-h|--help)
+			usage; exit 0 ;;
+		-*)
+			usage; exit 1 ;;
+		*)
+			[ -z "$ID" ] || die "only one link/code at a time"
+			ID="$1"; shift ;;
+	esac
+done
+
+[ -n "$ID" ] || { usage; exit 1; }
+
+# accept https://gofile.io/d/CODE, ...?c=CODE, or a bare code
+case "$ID" in
+	*'/d/'*) ID="${ID#*/d/}" ;;
+	*'c='*)  ID="${ID##*c=}" ;;
+esac
+ID="${ID%%[?&#]*}"
+[ -n "$ID" ] || die "cannot parse a content id from the link"
+
+msg "gofile: content $ID"
+TOK=$(new_token)
+[ -n "$TOK" ] || die "could not create a guest session (WiFi/DNS/clock?)"
+
+if [ -n "$PASS" ]; then
+	PASSHASH=$(printf '%s' "$PASS" | sha256sum | cut -d' ' -f1)
+fi
+
+ROOT_JSON=$(fetch_contents "$ID") ||
+	die "cannot fetch content ($LAST_STATUS) - if the recovery clock is wrong, fix the date and retry"
+
+case "$ROOT_JSON" in
+	*'"canAccess":false'*)
+		die "content is password protected - retry with -p PASSWORD" ;;
+esac
+
+if printf '%s' "$ROOT_JSON" | grep -q '"children":{'; then
+	DEST="$OUT/$ID"
+	msg "gofile: saving to $DEST"
+	mkdir -p "$DEST" || die "cannot create $DEST"
+	walk_json "$ROOT_JSON" "$DEST"
+else
+	mkdir -p "$OUT" || die "cannot create $OUT"
+	walk_json "$ROOT_JSON" "$OUT"
+fi
+
+msg "gofile: done"
